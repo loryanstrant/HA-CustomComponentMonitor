@@ -4,6 +4,7 @@
 [![GitHub release](https://img.shields.io/github/release/loryanstrant/HA-CustomComponentMonitor.svg)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases/)
 
 A Home Assistant custom integration that monitors your installation for unused custom components, themes, and frontend resources.
+<p align="center"><img width="256" height="256" alt="HA Custom Component Monitor logo 256x256" src="https://github.com/user-attachments/assets/075d02f4-6079-4042-87ae-a3d218e0d474" /></p>
 
 ## Overview
 
@@ -22,15 +23,26 @@ This integration creates sensors that list all installed custom components and i
 
 ## Installation
 
-### Via HACS (Recommended)
+### HACS (Recommended)
+(Waiting to add this to HACS default repository as of 12th Sept 2025, for now use the below method...)
 
 1. Open HACS in your Home Assistant instance
-2. Navigate to "Integrations"
-3. Click the "+" button to add a new repository
-4. Search for "Custom Component Monitor"
-5. Install the integration
-6. Restart Home Assistant
-7. Add the integration via Settings → Integrations
+2. Go to "Integrations"
+3. Click the three dots menu and select "Custom repositories"
+4. Add `https://github.com/loryanstrant/HA-CustomComponentMonitor` as repository
+5. Set category to "Integration"
+6. Click "Add"
+7. Find "Custom Component Monitor" in the integration list and install it
+8. Restart Home Assistant
+9. Go to Configuration > Integrations
+10. Click "+ Add Integration" and search for "Custom Component Monitor"
+11. Press Submit to complete the installation.
+
+![Custom Compoment Monitor setup](https://github.com/user-attachments/assets/053722b1-7292-46d4-975e-b85308b7f5dd)
+
+Or replace steps 1-6 with this:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=loryanstrant&repository=HA-CustomComponentMonitor&category=integration)
 
 ### Manual Installation
 
@@ -78,6 +90,10 @@ automation:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Development Approach
+<img width="256" height="256" alt="Vibe Coding with GitHub Copilot 256x256" src="https://github.com/user-attachments/assets/bb41d075-6b3e-4f2b-a88e-94b2022b5d4f" />
+
 
 ## License
 
