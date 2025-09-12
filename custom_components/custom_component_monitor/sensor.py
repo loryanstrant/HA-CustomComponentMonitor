@@ -349,6 +349,12 @@ class ComponentScanner:
                             self.config_dir / "custom_components" / domain
                         )
                 
+                # If no installation date yet, try fallback path
+                if install_date is None:
+                    install_date = self._get_installation_date(
+                        self.config_dir / "custom_components" / domain
+                    )
+                
                 installed_integrations.append({
                     "domain": domain,
                     "name": name,
@@ -433,9 +439,26 @@ class ComponentScanner:
                         install_date = self._get_installation_date(local_path)
                     except Exception:
                         # Fallback: try themes directory
-                        install_date = self._get_installation_date(
-                            self.config_dir / "themes" / display_name
-                        )
+                        theme_dir = self.config_dir / "themes"
+                        if theme_dir.exists():
+                            # Try display_name as directory first
+                            theme_fallback = theme_dir / display_name
+                            if not theme_fallback.exists():
+                                # Try with .yaml extension
+                                theme_fallback = theme_dir / f"{display_name}.yaml"
+                            install_date = self._get_installation_date(theme_fallback)
+                
+                # If no installation date yet, try fallback path
+                if install_date is None:
+                    # Try to find theme files in themes directory
+                    theme_dir = self.config_dir / "themes"
+                    if theme_dir.exists():
+                        # Try display_name as directory first
+                        theme_fallback = theme_dir / display_name
+                        if not theme_fallback.exists():
+                            # Try with .yaml extension
+                            theme_fallback = theme_dir / f"{display_name}.yaml"
+                        install_date = self._get_installation_date(theme_fallback)
                 
                 installed_themes.append({
                     "name": display_name,
@@ -524,6 +547,11 @@ class ComponentScanner:
                     except Exception:
                         # Fallback: use the path as-is
                         resource_path = local_path
+                
+                # If no installation date yet, try fallback path using display_name
+                if install_date is None:
+                    fallback_path = self.config_dir / "www" / display_name
+                    install_date = self._get_installation_date(fallback_path)
                 
                 installed_frontend.append({
                     "name": display_name,
