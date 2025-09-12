@@ -236,7 +236,7 @@ class ComponentScanner:
         
         return False
 
-    def _load_hacs_repositories(self) -> dict[str, Any]:
+    async def _load_hacs_repositories(self) -> dict[str, Any]:
         """Load HACS repositories from .storage/hacs.repositories file."""
         if self._hacs_repositories is not None:
             return self._hacs_repositories
@@ -248,8 +248,12 @@ class ComponentScanner:
                 self._hacs_repositories = {}
                 return self._hacs_repositories
                 
-            with open(hacs_storage_path, encoding="utf-8") as f:
-                hacs_data = json.load(f)
+            # Use run_in_executor to avoid blocking the event loop
+            def _read_file():
+                with open(hacs_storage_path, encoding="utf-8") as f:
+                    return json.load(f)
+            
+            hacs_data = await self.hass.async_add_executor_job(_read_file)
                 
             # Extract repositories data
             repositories = hacs_data.get("data", {})
@@ -287,7 +291,7 @@ class ComponentScanner:
     async def scan_custom_integrations(self) -> dict[str, Any]:
         """Scan for HACS-installed custom integrations."""
         # Load HACS repositories and filter for installed integrations
-        hacs_repositories = self._load_hacs_repositories()
+        hacs_repositories = await self._load_hacs_repositories()
         
         installed_integrations = []
         
@@ -381,7 +385,7 @@ class ComponentScanner:
     async def scan_custom_themes(self) -> dict[str, Any]:
         """Scan for HACS-installed custom themes."""
         # Load HACS repositories and filter for installed themes
-        hacs_repositories = self._load_hacs_repositories()
+        hacs_repositories = await self._load_hacs_repositories()
         
         installed_themes = []
         
@@ -466,7 +470,7 @@ class ComponentScanner:
     async def scan_custom_frontend(self) -> dict[str, Any]:
         """Scan for HACS-installed frontend resources."""
         # Load HACS repositories and filter for installed plugins (frontend resources)
-        hacs_repositories = self._load_hacs_repositories()
+        hacs_repositories = await self._load_hacs_repositories()
         
         installed_frontend = []
         
