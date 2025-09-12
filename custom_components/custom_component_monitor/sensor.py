@@ -48,6 +48,75 @@ class ComponentScanner:
         """Initialize the scanner."""
         self.hass = hass
         self.config_dir = Path(hass.config.config_dir)
+        self._hacs_repositories = None
+
+    def _load_hacs_repositories(self) -> dict[str, Any]:
+        """Load HACS repositories from .storage/hacs.repositories file."""
+        if self._hacs_repositories is not None:
+            return self._hacs_repositories
+            
+        try:
+            hacs_storage_path = self.config_dir / ".storage" / "hacs.repositories"
+            if not hacs_storage_path.exists():
+                _LOGGER.debug("HACS repositories file not found at %s", hacs_storage_path)
+                self._hacs_repositories = {}
+                return self._hacs_repositories
+                
+            with open(hacs_storage_path, encoding="utf-8") as f:
+                hacs_data = json.load(f)
+                
+            # Extract repositories data
+            repositories = hacs_data.get("data", {})
+            _LOGGER.debug("Loaded %d repositories from HACS storage", len(repositories))
+            self._hacs_repositories = repositories
+            return self._hacs_repositories
+            
+        except (json.JSONDecodeError, FileNotFoundError, OSError) as ex:
+            _LOGGER.warning("Could not load HACS repositories file: %s", ex)
+            self._hacs_repositories = {}
+            return self._hacs_repositories
+
+    def _find_hacs_repository_by_local_path(self, local_path: str, category: str = None) -> dict[str, Any] | None:
+        """Find HACS repository by local path and optionally category."""
+        repositories = self._load_hacs_repositories()
+        
+        for repo_key, repo_data in repositories.items():
+            if not isinstance(repo_data, dict):
+                continue
+                
+            # Check if category matches (if specified)
+            if category and repo_data.get("category") != category:
+                continue
+                
+            # Check if local path matches
+            repo_local_path = repo_data.get("local_path", "")
+            if repo_local_path and Path(repo_local_path).name == Path(local_path).name:
+                return repo_data
+                
+        return None
+
+    def _find_hacs_repository_by_domain(self, domain: str) -> dict[str, Any] | None:
+        """Find HACS repository by domain."""
+        repositories = self._load_hacs_repositories()
+        
+        for repo_key, repo_data in repositories.items():
+            if not isinstance(repo_data, dict):
+                continue
+                
+            # Check category is integration
+            if repo_data.get("category") != "integration":
+                continue
+                
+            # Check domain matches
+            if repo_data.get("domain") == domain:
+                return repo_data
+                
+            # Also check in repository_manifest
+            manifest = repo_data.get("repository_manifest", {})
+            if isinstance(manifest, dict) and manifest.get("domain") == domain:
+                return repo_data
+                
+        return None
 
     def _get_installation_date(self, path: Path) -> str | None:
         """Get the installation date of a component."""
@@ -167,26 +236,62 @@ class ComponentScanner:
                         with open(manifest_path, encoding="utf-8") as f:
                             manifest = json.load(f)
                         
-                        # Extract repository URL from documentation or issue tracker
-                        repo_url = ""
-                        doc_url = manifest.get("documentation", "")
-                        issue_url = manifest.get("issue_tracker", "")
+                        domain = item.name
                         
-                        if doc_url and "github.com" in doc_url:
-                            repo_url = doc_url
-                        elif issue_url and "github.com" in issue_url:
-                            # Convert issues URL to main repo URL
-                            repo_url = issue_url.replace("/issues", "")
-                        
-                        installed_integrations.append({
-                            "domain": item.name,
-                            "name": manifest.get("name", item.name),
-                            "documentation": doc_url,
-                            "repository": repo_url,
-                            "version": manifest.get("version", "unknown"),
-                            "codeowners": manifest.get("codeowners", []),
-                            "installed_date": self._get_installation_date(item),
-                        })
+                        # Try to get repository info from HACS first
+                        hacs_repo = self._find_hacs_repository_by_domain(domain)
+                        if hacs_repo:
+                            # Use HACS metadata
+                            repo_url = ""
+                            doc_url = ""
+                            
+                            # Extract from HACS repository data
+                            full_name = hacs_repo.get("full_name", "")
+                            if full_name:
+                                repo_url = f"https://github.com/{full_name}"
+                            
+                            # Get documentation from repository manifest or fallback
+                            repo_manifest = hacs_repo.get("repository_manifest", {})
+                            if isinstance(repo_manifest, dict):
+                                doc_url = repo_manifest.get("documentation", "")
+                            
+                            if not doc_url and repo_url:
+                                doc_url = repo_url
+                                
+                            installed_integrations.append({
+                                "domain": domain,
+                                "name": hacs_repo.get("name", manifest.get("name", domain)),
+                                "documentation": doc_url,
+                                "repository": repo_url,
+                                "version": hacs_repo.get("version_installed", manifest.get("version", "unknown")),
+                                "codeowners": manifest.get("codeowners", []),
+                                "installed_date": self._get_installation_date(item),
+                                "hacs_repository": full_name,
+                                "hacs_status": hacs_repo.get("status", "unknown"),
+                            })
+                        else:
+                            # Fallback to original method for non-HACS components
+                            repo_url = ""
+                            doc_url = manifest.get("documentation", "")
+                            issue_url = manifest.get("issue_tracker", "")
+                            
+                            if doc_url and "github.com" in doc_url:
+                                repo_url = doc_url
+                            elif issue_url and "github.com" in issue_url:
+                                # Convert issues URL to main repo URL
+                                repo_url = issue_url.replace("/issues", "")
+                            
+                            installed_integrations.append({
+                                "domain": domain,
+                                "name": manifest.get("name", domain),
+                                "documentation": doc_url,
+                                "repository": repo_url,
+                                "version": manifest.get("version", "unknown"),
+                                "codeowners": manifest.get("codeowners", []),
+                                "installed_date": self._get_installation_date(item),
+                                "hacs_repository": "",
+                                "hacs_status": "not_hacs",
+                            })
                     except (json.JSONDecodeError, FileNotFoundError) as ex:
                         _LOGGER.warning("Could not read manifest for %s: %s", item.name, ex)
 
@@ -221,33 +326,100 @@ class ComponentScanner:
 
         installed_themes = []
         
+        # Get HACS repositories for themes
+        hacs_repositories = self._load_hacs_repositories()
+        hacs_themes = {repo_key: repo_data for repo_key, repo_data in hacs_repositories.items() 
+                      if isinstance(repo_data, dict) and repo_data.get("category") == "theme"}
+        
         # Scan for theme files
         for item in themes_path.iterdir():
             if item.is_file() and item.suffix in [".yaml", ".yml"]:
-                repo_info = self._extract_hacs_repository_info(item, "theme")
-                installed_themes.append({
-                    "name": item.stem,
-                    "file": str(item.relative_to(self.config_dir)),
-                    "full_path": str(item),
-                    "repository": repo_info["repository"],
-                    "documentation": repo_info["documentation"],
-                    "installed_date": self._get_installation_date(item),
-                })
+                theme_name = item.stem
+                
+                # Try to find HACS repository for this theme
+                hacs_repo = self._find_hacs_repository_by_local_path(str(item), "theme")
+                
+                if hacs_repo:
+                    # Use HACS metadata
+                    full_name = hacs_repo.get("full_name", "")
+                    repo_url = f"https://github.com/{full_name}" if full_name else ""
+                    
+                    repo_manifest = hacs_repo.get("repository_manifest", {})
+                    doc_url = ""
+                    if isinstance(repo_manifest, dict):
+                        doc_url = repo_manifest.get("documentation", repo_url)
+                    
+                    installed_themes.append({
+                        "name": hacs_repo.get("name", theme_name),
+                        "file": str(item.relative_to(self.config_dir)),
+                        "full_path": str(item),
+                        "repository": repo_url,
+                        "documentation": doc_url,
+                        "installed_date": self._get_installation_date(item),
+                        "hacs_repository": full_name,
+                        "hacs_status": hacs_repo.get("status", "unknown"),
+                        "version": hacs_repo.get("version_installed", "unknown"),
+                    })
+                else:
+                    # Fallback to original method for non-HACS themes
+                    repo_info = self._extract_hacs_repository_info(item, "theme")
+                    installed_themes.append({
+                        "name": theme_name,
+                        "file": str(item.relative_to(self.config_dir)),
+                        "full_path": str(item),
+                        "repository": repo_info["repository"],
+                        "documentation": repo_info["documentation"],
+                        "installed_date": self._get_installation_date(item),
+                        "hacs_repository": "",
+                        "hacs_status": "not_hacs",
+                        "version": "unknown",
+                    })
 
         # Also check themes directory for subdirectories containing themes
         for item in themes_path.iterdir():
             if item.is_dir() and not item.name.startswith("."):
                 for theme_file in item.iterdir():
                     if theme_file.is_file() and theme_file.suffix in [".yaml", ".yml"]:
-                        repo_info = self._extract_hacs_repository_info(theme_file, "theme")
-                        installed_themes.append({
-                            "name": f"{item.name}/{theme_file.stem}",
-                            "file": str(theme_file.relative_to(self.config_dir)),
-                            "full_path": str(theme_file),
-                            "repository": repo_info["repository"],
-                            "documentation": repo_info["documentation"],
-                            "installed_date": self._get_installation_date(theme_file),
-                        })
+                        theme_name = f"{item.name}/{theme_file.stem}"
+                        
+                        # Try to find HACS repository for this theme directory
+                        hacs_repo = self._find_hacs_repository_by_local_path(str(item), "theme")
+                        
+                        if hacs_repo:
+                            # Use HACS metadata
+                            full_name = hacs_repo.get("full_name", "")
+                            repo_url = f"https://github.com/{full_name}" if full_name else ""
+                            
+                            repo_manifest = hacs_repo.get("repository_manifest", {})
+                            doc_url = ""
+                            if isinstance(repo_manifest, dict):
+                                doc_url = repo_manifest.get("documentation", repo_url)
+                            
+                            installed_themes.append({
+                                "name": hacs_repo.get("name", theme_name),
+                                "file": str(theme_file.relative_to(self.config_dir)),
+                                "full_path": str(theme_file),
+                                "repository": repo_url,
+                                "documentation": doc_url,
+                                "installed_date": self._get_installation_date(theme_file),
+                                "hacs_repository": full_name,
+                                "hacs_status": hacs_repo.get("status", "unknown"),
+                                "version": hacs_repo.get("version_installed", "unknown"),
+                            })
+                        else:
+                            # Fallback to original method
+                            repo_info = self._extract_hacs_repository_info(theme_file, "theme")
+                            installed_themes.append({
+                                "name": theme_name,
+                                "file": str(theme_file.relative_to(self.config_dir)),
+                                "full_path": str(theme_file),
+                                "repository": repo_info["repository"],
+                                "documentation": repo_info["documentation"],
+                                "installed_date": self._get_installation_date(theme_file),
+                                "hacs_repository": "",
+                                "hacs_status": "not_hacs",
+                                "version": "unknown",
+                            })
 
         # Get current theme from frontend and check all configured themes
         used_themes = []
@@ -294,6 +466,11 @@ class ComponentScanner:
 
         installed_frontend = []
         
+        # Get HACS repositories for frontend resources (plugins)
+        hacs_repositories = self._load_hacs_repositories()
+        hacs_plugins = {repo_key: repo_data for repo_key, repo_data in hacs_repositories.items() 
+                       if isinstance(repo_data, dict) and repo_data.get("category") == "plugin"}
+        
         def scan_directory(path: Path, relative_path: str = "") -> None:
             """Recursively scan directory for frontend resources."""
             for item in path.iterdir():
@@ -303,29 +480,90 @@ class ComponentScanner:
                 rel_path = f"{relative_path}/{item.name}" if relative_path else item.name
                 
                 if item.is_dir():
-                    repo_info = self._extract_hacs_repository_info(item, "frontend")
-                    installed_frontend.append({
-                        "name": rel_path,
-                        "path": str(item.relative_to(self.config_dir)),
-                        "type": "directory",
-                        "full_path": str(item),
-                        "repository": repo_info["repository"],
-                        "documentation": repo_info["documentation"],
-                        "installed_date": self._get_installation_date(item),
-                    })
+                    # Try to find HACS repository for this directory
+                    hacs_repo = self._find_hacs_repository_by_local_path(str(item), "plugin")
+                    
+                    if hacs_repo:
+                        # Use HACS metadata
+                        full_name = hacs_repo.get("full_name", "")
+                        repo_url = f"https://github.com/{full_name}" if full_name else ""
+                        
+                        repo_manifest = hacs_repo.get("repository_manifest", {})
+                        doc_url = ""
+                        if isinstance(repo_manifest, dict):
+                            doc_url = repo_manifest.get("documentation", repo_url)
+                        
+                        installed_frontend.append({
+                            "name": hacs_repo.get("name", rel_path),
+                            "path": str(item.relative_to(self.config_dir)),
+                            "type": "directory",
+                            "full_path": str(item),
+                            "repository": repo_url,
+                            "documentation": doc_url,
+                            "installed_date": self._get_installation_date(item),
+                            "hacs_repository": full_name,
+                            "hacs_status": hacs_repo.get("status", "unknown"),
+                            "version": hacs_repo.get("version_installed", "unknown"),
+                        })
+                    else:
+                        # Fallback to original method
+                        repo_info = self._extract_hacs_repository_info(item, "frontend")
+                        installed_frontend.append({
+                            "name": rel_path,
+                            "path": str(item.relative_to(self.config_dir)),
+                            "type": "directory",
+                            "full_path": str(item),
+                            "repository": repo_info["repository"],
+                            "documentation": repo_info["documentation"],
+                            "installed_date": self._get_installation_date(item),
+                            "hacs_repository": "",
+                            "hacs_status": "not_hacs",
+                            "version": "unknown",
+                        })
                     scan_directory(item, rel_path)
                 elif item.suffix in [".js", ".css", ".html", ".json", ".map"]:
-                    repo_info = self._extract_hacs_repository_info(item, "frontend")
-                    installed_frontend.append({
-                        "name": rel_path,
-                        "path": str(item.relative_to(self.config_dir)),
-                        "type": "file",
-                        "extension": item.suffix,
-                        "full_path": str(item),
-                        "repository": repo_info["repository"],
-                        "documentation": repo_info["documentation"],
-                        "installed_date": self._get_installation_date(item),
-                    })
+                    # For individual files, try to find parent directory in HACS
+                    parent_hacs_repo = self._find_hacs_repository_by_local_path(str(item.parent), "plugin")
+                    
+                    if parent_hacs_repo:
+                        # Use HACS metadata from parent directory
+                        full_name = parent_hacs_repo.get("full_name", "")
+                        repo_url = f"https://github.com/{full_name}" if full_name else ""
+                        
+                        repo_manifest = parent_hacs_repo.get("repository_manifest", {})
+                        doc_url = ""
+                        if isinstance(repo_manifest, dict):
+                            doc_url = repo_manifest.get("documentation", repo_url)
+                        
+                        installed_frontend.append({
+                            "name": rel_path,
+                            "path": str(item.relative_to(self.config_dir)),
+                            "type": "file",
+                            "extension": item.suffix,
+                            "full_path": str(item),
+                            "repository": repo_url,
+                            "documentation": doc_url,
+                            "installed_date": self._get_installation_date(item),
+                            "hacs_repository": full_name,
+                            "hacs_status": parent_hacs_repo.get("status", "unknown"),
+                            "version": parent_hacs_repo.get("version_installed", "unknown"),
+                        })
+                    else:
+                        # Fallback to original method
+                        repo_info = self._extract_hacs_repository_info(item, "frontend")
+                        installed_frontend.append({
+                            "name": rel_path,
+                            "path": str(item.relative_to(self.config_dir)),
+                            "type": "file",
+                            "extension": item.suffix,
+                            "full_path": str(item),
+                            "repository": repo_info["repository"],
+                            "documentation": repo_info["documentation"],
+                            "installed_date": self._get_installation_date(item),
+                            "hacs_repository": "",
+                            "hacs_status": "not_hacs",
+                            "version": "unknown",
+                        })
 
         scan_directory(www_path)
 
