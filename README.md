@@ -3,23 +3,23 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 [![GitHub release](https://img.shields.io/github/release/loryanstrant/HA-CustomComponentMonitor.svg)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases/)
 
-A Home Assistant custom integration that monitors your installation for unused custom components, themes, and frontend resources.
+A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources.
 <p align="center"><img width="256" height="256" alt="HA Custom Component Monitor logo 256x256" src="https://github.com/user-attachments/assets/075d02f4-6079-4042-87ae-a3d218e0d474" /></p>
 
 ## Overview
 
-Home Assistant allows the installation of custom components such as dashboards/cards, themes, and integrations, which can be installed directly or via Home Assistant Community Store (HACS). Many of these are left unused over time.
+Home Assistant allows the installation of custom components such as dashboards/cards, themes, and integrations via Home Assistant Community Store (HACS). Many of these are left unused over time.
 
-This integration creates sensors that list all installed custom components and identifies if they are used in any way (configured integrations, active themes, referenced frontend resources). It helps you clean up your installation by identifying unused components with links to their respective repositories.
+This integration creates sensors that list all HACS-installed custom components and identifies if they are used in any way (configured integrations, active themes, referenced frontend resources). It helps you clean up your installation by identifying unused HACS components with links to their respective repositories.
 
 ## Features
 
-- 🔍 **Automatic Discovery**: Scans your Home Assistant installation for custom components
-- 📊 **Usage Analysis**: Determines which components are actually being used
+- 🔍 **HACS Discovery**: Scans your HACS repositories for installed custom components
+- 📊 **Usage Analysis**: Determines which HACS components are actually being used
 - 🏷️ **Repository Links**: Provides links to component repositories for easy management (integrations, themes, and frontend resources)
 - 📅 **Installation Tracking**: Shows when custom components were first installed
 - ⚡ **Real-time Updates**: Updates hourly to reflect configuration changes
-- 🎨 **HACS Compatible**: Full integration with Home Assistant Community Store
+- 🎨 **HACS Focused**: Specifically designed to work with HACS-managed components
 
 ## Installation
 

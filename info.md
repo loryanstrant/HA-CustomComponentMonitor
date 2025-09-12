@@ -1,12 +1,12 @@
 # Custom Component Monitor
 
-This integration monitors your Home Assistant installation for custom components and identifies which ones are not being used.
+This integration monitors your HACS installation for custom components and identifies which ones are not being used.
 
 ## Features
 
-- **Custom Integration Monitoring**: Scans your `custom_components` directory and identifies which integrations are installed but not configured
-- **Theme Monitoring**: Checks your custom themes and identifies unused ones with repository links
-- **Frontend Resource Monitoring**: Scans your `www` directory for custom frontend resources with repository links
+- **HACS Integration Monitoring**: Scans your HACS repositories and identifies which integrations are installed but not configured
+- **HACS Theme Monitoring**: Checks your HACS themes and identifies unused ones with repository links
+- **HACS Frontend Resource Monitoring**: Scans your HACS frontend plugins with repository links
 - **Installation Date Tracking**: Shows when each component was first installed
 
 ## Sensors
@@ -14,15 +14,15 @@ This integration monitors your Home Assistant installation for custom components
 The integration creates three sensors:
 
 1. **Unused Custom Integrations** (`sensor.unused_custom_integrations`)
-   - Shows the count of unused custom integrations
+   - Shows the count of unused HACS integrations
    - Attributes include detailed information about each unused integration with repository links and installation dates
 
 2. **Unused Custom Themes** (`sensor.unused_custom_themes`)
-   - Shows the count of unused custom themes
+   - Shows the count of unused HACS themes
    - Attributes include list of unused theme files with repository links and installation dates
 
 3. **Unused Frontend Resources** (`sensor.unused_frontend_resources`)
-   - Shows the count of unused frontend resources in the www directory
+   - Shows the count of unused HACS frontend resources
    - Attributes include list of potentially unused files and directories with repository links and installation dates
 
 ## Installation
