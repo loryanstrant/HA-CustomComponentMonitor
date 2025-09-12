@@ -89,6 +89,19 @@ class ComponentScanner:
             if any(keyword in path_str.lower() for keyword in ["thumb", "cache", "temp", "tmp"]):
                 return True
         
+        # Exclude directories that look like user content (not component-related)
+        user_content_patterns = [
+            r'^www/[^/]+-[^/]+/(?:css|js|images?)(?:/.*)?$',  # Pattern like ha-tracker/css, my-project/images
+            r'^www/[^/]+_[^/]+/(?:css|js|images?)(?:/.*)?$',  # Pattern like my_project/css
+        ]
+        
+        for pattern in user_content_patterns:
+            if re.match(pattern, path_str):
+                # But don't exclude if it contains component indicators
+                component_indicators = ["community", "hacsfiles", "hacs-frontend", "custom-cards", "custom_cards", "lovelace"]
+                if not any(indicator in path_str.lower() for indicator in component_indicators):
+                    return True
+        
         # Exclude common non-component file types in www directory
         # Check by extension since we might not have the actual file
         non_component_extensions = {
