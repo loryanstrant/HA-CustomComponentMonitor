@@ -400,11 +400,14 @@ class ComponentScanner:
                     
                     repo_manifest = hacs_repo.get("repository_manifest", {})
                     doc_url = ""
+                    display_name = theme_name
                     if isinstance(repo_manifest, dict):
                         doc_url = repo_manifest.get("documentation", repo_url)
+                        # Use repository manifest name if available
+                        display_name = repo_manifest.get("name", hacs_repo.get("name", theme_name))
                     
                     installed_themes.append({
-                        "name": hacs_repo.get("name", theme_name),
+                        "name": display_name,
                         "file": str(item.relative_to(self.config_dir)),
                         "full_path": str(item),
                         "repository": repo_url,
@@ -446,11 +449,14 @@ class ComponentScanner:
                             
                             repo_manifest = hacs_repo.get("repository_manifest", {})
                             doc_url = ""
+                            display_name = theme_name
                             if isinstance(repo_manifest, dict):
                                 doc_url = repo_manifest.get("documentation", repo_url)
+                                # Use repository manifest name if available
+                                display_name = repo_manifest.get("name", hacs_repo.get("name", theme_name))
                             
                             installed_themes.append({
-                                "name": hacs_repo.get("name", theme_name),
+                                "name": display_name,
                                 "file": str(theme_file.relative_to(self.config_dir)),
                                 "full_path": str(theme_file),
                                 "repository": repo_url,
@@ -544,11 +550,14 @@ class ComponentScanner:
                         
                         repo_manifest = hacs_repo.get("repository_manifest", {})
                         doc_url = ""
+                        display_name = rel_path
                         if isinstance(repo_manifest, dict):
                             doc_url = repo_manifest.get("documentation", repo_url)
+                            # Use repository manifest name if available
+                            display_name = repo_manifest.get("name", hacs_repo.get("name", rel_path))
                         
                         installed_frontend.append({
-                            "name": hacs_repo.get("name", rel_path),
+                            "name": display_name,
                             "path": str(item.relative_to(self.config_dir)),
                             "type": "directory",
                             "full_path": str(item),
@@ -559,6 +568,7 @@ class ComponentScanner:
                             "hacs_status": hacs_repo.get("status", "unknown"),
                             "version": hacs_repo.get("version_installed", "unknown"),
                         })
+                        # Don't recursively scan HACS repositories - we only want the main entry
                     else:
                         # Fallback to original method
                         repo_info = self._extract_hacs_repository_info(item, "frontend")
@@ -574,7 +584,8 @@ class ComponentScanner:
                             "hacs_status": "not_hacs",
                             "version": "unknown",
                         })
-                    scan_directory(item, rel_path)
+                        # Recursively scan non-HACS directories
+                        scan_directory(item, rel_path)
                 elif item.suffix in [".js", ".css", ".html", ".json", ".map"]:
                     # For individual files, try to find parent directory in HACS
                     parent_hacs_repo = self._find_hacs_repository_by_local_path(str(item.parent), "plugin")
