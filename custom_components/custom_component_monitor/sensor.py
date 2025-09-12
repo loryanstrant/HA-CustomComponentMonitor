@@ -84,25 +84,44 @@ class ComponentScanner:
             _LOGGER.debug("Storage directory not found: %s", storage_dir)
             return themes_used, resources_used
         
-        # Find all lovelace* files
-        for file_path in storage_dir.glob("lovelace*"):
+        # Find all files that start with "lovelace" - this includes:
+        # - lovelace (main dashboard)
+        # - lovelace.map, lovelace.family_area (named dashboards)
+        # - lovelace_backup, lovelace.area.kitchen (other variations)
+        lovelace_files = []
+        for file_path in storage_dir.iterdir():
+            if file_path.is_file() and file_path.name.startswith("lovelace"):
+                lovelace_files.append(file_path)
+        
+        _LOGGER.debug("Found %d lovelace files: %s", len(lovelace_files), 
+                     [f.name for f in lovelace_files])
+        
+        for file_path in lovelace_files:
+            _LOGGER.debug("Processing lovelace file: %s", file_path.name)
             try:
                 with open(file_path, encoding="utf-8") as f:
                     data = json.load(f)
                 
                 config = data.get("data", {}).get("config", {})
+                if not config:
+                    _LOGGER.debug("Skipping %s: no config section found", file_path.name)
+                    continue
+                
+                _LOGGER.debug("Processing config from %s", file_path.name)
                 
                 # Check for theme at root level
                 if "theme" in config:
                     themes_used.add(config["theme"])
+                    _LOGGER.debug("Found root theme '%s' in %s", config["theme"], file_path.name)
                 
                 # Check for themes in views
-                for view in config.get("views", []):
+                for i, view in enumerate(config.get("views", [])):
                     if "theme" in view:
                         themes_used.add(view["theme"])
+                        _LOGGER.debug("Found view theme '%s' in %s view %d", view["theme"], file_path.name, i)
                 
                 # Check for frontend resources
-                for resource in config.get("resources", []):
+                for i, resource in enumerate(config.get("resources", [])):
                     url = resource.get("url", "")
                     if url.startswith("/hacsfiles/"):
                         # Extract component name from path
@@ -110,31 +129,44 @@ class ComponentScanner:
                         if len(parts) >= 3:
                             component_name = parts[2]  # /hacsfiles/component-name/file.js
                             resources_used.add(component_name)
+                            _LOGGER.debug("Found resource '%s' from URL '%s' in %s", 
+                                         component_name, url, file_path.name)
                 
                 # Check for custom card types in cards
-                def extract_custom_cards(cards):
+                def extract_custom_cards(cards, file_name, view_index=None, depth=0):
                     custom_cards = set()
                     if not isinstance(cards, list):
                         return custom_cards
                     
-                    for card in cards:
+                    for j, card in enumerate(cards):
                         if isinstance(card, dict):
                             card_type = card.get("type", "")
                             if card_type.startswith("custom:"):
-                                custom_cards.add(card_type[7:])  # Remove "custom:" prefix
+                                card_name = card_type[7:]  # Remove "custom:" prefix
+                                custom_cards.add(card_name)
+                                location = f"{file_name}"
+                                if view_index is not None:
+                                    location += f" view {view_index}"
+                                if depth > 0:
+                                    location += f" depth {depth}"
+                                _LOGGER.debug("Found custom card '%s' in %s", card_name, location)
                             
                             # Recursively check nested cards
                             if "cards" in card:
-                                custom_cards.update(extract_custom_cards(card["cards"]))
+                                nested_cards = extract_custom_cards(
+                                    card["cards"], file_name, view_index, depth + 1
+                                )
+                                custom_cards.update(nested_cards)
                     
                     return custom_cards
                 
-                for view in config.get("views", []):
+                for i, view in enumerate(config.get("views", [])):
                     if "cards" in view:
-                        resources_used.update(extract_custom_cards(view["cards"]))
+                        view_custom_cards = extract_custom_cards(view["cards"], file_path.name, i)
+                        resources_used.update(view_custom_cards)
                         
             except (json.JSONDecodeError, OSError, UnicodeDecodeError) as ex:
-                _LOGGER.debug("Error processing lovelace file %s: %s", file_path, ex)
+                _LOGGER.warning("Error processing lovelace file %s: %s", file_path.name, ex)
                 continue
         
         _LOGGER.debug("Found used themes: %s", themes_used)
