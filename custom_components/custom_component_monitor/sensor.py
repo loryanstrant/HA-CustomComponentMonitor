@@ -44,7 +44,7 @@ class ComponentScanner:
         self.config_dir = Path(hass.config.config_dir)
         self._hacs_repositories = None
 
-    def _load_storage_file(self, filename: str) -> dict[str, Any]:
+    async def _load_storage_file(self, filename: str) -> dict[str, Any]:
         """Load a storage file and return its data."""
         try:
             storage_path = self.config_dir / ".storage" / filename
@@ -52,8 +52,12 @@ class ComponentScanner:
                 _LOGGER.debug("Storage file not found: %s", storage_path)
                 return {}
                 
-            with open(storage_path, encoding="utf-8") as f:
-                storage_data = json.load(f)
+            # Use run_in_executor to avoid blocking the event loop
+            def _read_storage_file():
+                with open(storage_path, encoding="utf-8") as f:
+                    return json.load(f)
+            
+            storage_data = await self.hass.async_add_executor_job(_read_storage_file)
                 
             return storage_data.get("data", {})
             
@@ -61,9 +65,9 @@ class ComponentScanner:
             _LOGGER.debug("Could not load storage file %s: %s", filename, ex)
             return {}
 
-    def _get_configured_integrations(self) -> set[str]:
+    async def _get_configured_integrations(self) -> set[str]:
         """Get configured integration domains from core.config_entries."""
-        config_entries_data = self._load_storage_file("core.config_entries")
+        config_entries_data = await self._load_storage_file("core.config_entries")
         configured_domains = set()
         
         for entry in config_entries_data.get("entries", []):
@@ -74,7 +78,7 @@ class ComponentScanner:
         _LOGGER.debug("Found configured domains: %s", configured_domains)
         return configured_domains
 
-    def _get_used_themes_and_resources_from_storage(self) -> tuple[set[str], set[str]]:
+    async def _get_used_themes_and_resources_from_storage(self) -> tuple[set[str], set[str]]:
         """Get used themes and frontend resources from lovelace storage files."""
         storage_dir = self.config_dir / ".storage"
         themes_used = set()
@@ -84,14 +88,15 @@ class ComponentScanner:
             _LOGGER.debug("Storage directory not found: %s", storage_dir)
             return themes_used, resources_used
         
-        # Find all files that start with "lovelace" - this includes:
-        # - lovelace (main dashboard)
-        # - lovelace.map, lovelace.family_area (named dashboards)
-        # - lovelace_backup, lovelace.area.kitchen (other variations)
-        lovelace_files = []
-        for file_path in storage_dir.iterdir():
-            if file_path.is_file() and file_path.name.startswith("lovelace"):
-                lovelace_files.append(file_path)
+        # Use executor to avoid blocking on directory listing
+        def _list_lovelace_files():
+            lovelace_files = []
+            for file_path in storage_dir.iterdir():
+                if file_path.is_file() and file_path.name.startswith("lovelace"):
+                    lovelace_files.append(file_path)
+            return lovelace_files
+        
+        lovelace_files = await self.hass.async_add_executor_job(_list_lovelace_files)
         
         _LOGGER.debug("Found %d lovelace files: %s", len(lovelace_files), 
                      [f.name for f in lovelace_files])
@@ -99,8 +104,12 @@ class ComponentScanner:
         for file_path in lovelace_files:
             _LOGGER.debug("Processing lovelace file: %s", file_path.name)
             try:
-                with open(file_path, encoding="utf-8") as f:
-                    data = json.load(f)
+                # Use executor to avoid blocking on file read
+                def _read_lovelace_file():
+                    with open(file_path, encoding="utf-8") as f:
+                        return json.load(f)
+                
+                data = await self.hass.async_add_executor_job(_read_lovelace_file)
                 
                 config = data.get("data", {}).get("config", {})
                 if not config:
@@ -173,10 +182,10 @@ class ComponentScanner:
         _LOGGER.debug("Found used resources: %s", resources_used)
         return themes_used, resources_used
 
-    def _is_frontend_resource_used(self, resource: dict[str, Any], local_path: str) -> bool:
+    async def _is_frontend_resource_used(self, resource: dict[str, Any], local_path: str) -> bool:
         """Check if a frontend resource is used by scanning lovelace storage files."""
         try:
-            _, resources_used = self._get_used_themes_and_resources_from_storage()
+            _, resources_used = await self._get_used_themes_and_resources_from_storage()
             
             # Get resource name from the HACS repository name or path
             resource_name = resource.get("name", "")
@@ -206,12 +215,12 @@ class ComponentScanner:
             _LOGGER.debug("Error checking frontend resource usage for %s: %s", local_path, ex)
             return False
 
-    def _is_theme_used(self, theme: dict[str, Any], current_theme: str, configured_themes: set) -> bool:
+    async def _is_theme_used(self, theme: dict[str, Any], current_theme: str, configured_themes: set) -> bool:
         """Check if a theme is used by scanning lovelace storage files."""
         theme_name = theme["name"]
         
         # Get used themes from storage files
-        themes_used, _ = self._get_used_themes_and_resources_from_storage()
+        themes_used, _ = await self._get_used_themes_and_resources_from_storage()
         
         # Check direct name match
         if theme_name in themes_used:
@@ -370,7 +379,7 @@ class ComponentScanner:
                 })
 
         # Check which integrations are actually configured
-        configured_domains = self._get_configured_integrations()
+        configured_domains = await self._get_configured_integrations()
         used_integrations = []
         unused_integrations = []
         
@@ -476,7 +485,7 @@ class ComponentScanner:
         unused_themes = []
         
         for theme in installed_themes:
-            is_used = self._is_theme_used(theme, None, set())
+            is_used = await self._is_theme_used(theme, None, set())
             
             if is_used:
                 used_themes.append(theme)
@@ -594,7 +603,7 @@ class ComponentScanner:
                 local_path = resource_path
                 
             # Check if resource is used in lovelace storage files
-            is_used = self._is_frontend_resource_used(resource, local_path)
+            is_used = await self._is_frontend_resource_used(resource, local_path)
             
             if is_used:
                 used_frontend.append(resource)
