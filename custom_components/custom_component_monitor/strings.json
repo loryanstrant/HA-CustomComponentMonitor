@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Custom Component Monitor",
+        "description": "Set up Custom Component Monitor to track unused components in your Home Assistant installation."
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single configuration is allowed."
+    }
+  }
+}
