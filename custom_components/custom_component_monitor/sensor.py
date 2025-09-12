@@ -87,12 +87,66 @@ class ComponentScanner:
             # Check if category matches (if specified)
             if category and repo_data.get("category") != category:
                 continue
-                
-            # Check if local path matches
+            
+            # Check if local path matches using the repo_data local_path field
             repo_local_path = repo_data.get("local_path", "")
             if repo_local_path and Path(repo_local_path).name == Path(local_path).name:
                 return repo_data
+            
+            # For frontend plugins (category: "plugin"), try to match by repository name
+            if category == "plugin" or repo_data.get("category") == "plugin":
+                full_name = repo_data.get("full_name", "")
+                if full_name:
+                    # Extract repository name from GitHub full_name (e.g., "Clooos/Bubble-Card" -> "Bubble-Card")
+                    repo_name = full_name.split("/")[-1] if "/" in full_name else full_name
+                    
+                    # Check if the local path contains this repository name
+                    # Pattern: www/community/{repo-name}/ or similar
+                    local_path_obj = Path(local_path)
+                    local_path_str = str(local_path_obj)
+                    
+                    # Check various possible path patterns
+                    if (
+                        repo_name in local_path_str or
+                        repo_name == local_path_obj.name or
+                        (local_path_str.startswith("www/community/") and repo_name in local_path_str) or
+                        (local_path_str.startswith("/config/www/community/") and repo_name in local_path_str)
+                    ):
+                        return repo_data
+            
+            # For themes (category: "theme"), try to match by repository name or theme name
+            if category == "theme" or repo_data.get("category") == "theme":
+                full_name = repo_data.get("full_name", "")
+                repo_manifest = repo_data.get("repository_manifest", {})
                 
+                if full_name:
+                    # Extract repository name from GitHub full_name
+                    repo_name = full_name.split("/")[-1] if "/" in full_name else full_name
+                    local_path_obj = Path(local_path)
+                    local_path_str = str(local_path_obj)
+                    
+                    # Check if repository name matches the theme path or filename
+                    if (
+                        repo_name in local_path_str or
+                        repo_name == local_path_obj.stem or  # filename without extension
+                        repo_name == local_path_obj.name or  # full filename
+                        (local_path_str.startswith("themes/") and repo_name in local_path_str)
+                    ):
+                        return repo_data
+                
+                # Also check by theme name from repository manifest
+                if isinstance(repo_manifest, dict) and "name" in repo_manifest:
+                    theme_name = repo_manifest["name"]
+                    local_path_obj = Path(local_path)
+                    local_path_str = str(local_path_obj)
+                    
+                    if (
+                        theme_name.lower().replace(" ", "-") in local_path_str.lower() or
+                        theme_name.lower().replace(" ", "_") in local_path_str.lower() or
+                        theme_name.lower() in local_path_str.lower()
+                    ):
+                        return repo_data
+                        
         return None
 
     def _find_hacs_repository_by_domain(self, domain: str) -> dict[str, Any] | None:
