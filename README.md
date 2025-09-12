@@ -15,7 +15,8 @@ This integration creates sensors that list all installed custom components and i
 
 - 🔍 **Automatic Discovery**: Scans your Home Assistant installation for custom components
 - 📊 **Usage Analysis**: Determines which components are actually being used
-- 🏷️ **Repository Links**: Provides links to component repositories for easy management
+- 🏷️ **Repository Links**: Provides links to component repositories for easy management (integrations, themes, and frontend resources)
+- 📅 **Installation Tracking**: Shows when custom components were first installed
 - ⚡ **Real-time Updates**: Updates hourly to reflect configuration changes
 - 🎨 **HACS Compatible**: Full integration with Home Assistant Community Store
 
@@ -54,7 +55,7 @@ After installation, the integration will create three sensors:
 Each sensor provides detailed attributes including:
 - Total count of installed components
 - Count of used components
-- List of unused components with metadata (names, versions, repository links)
+- List of unused components with metadata (names, versions, repository links, installation dates)
 
 ## Example Automation
 

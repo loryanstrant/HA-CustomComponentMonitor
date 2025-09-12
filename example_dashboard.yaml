@@ -33,6 +33,9 @@ cards:
           {% if item.version != 'unknown' %}
           - Version: {{ item.version }}
           {% endif %}
+          {% if item.installed_date %}
+          - Installed: {{ item.installed_date }}
+          {% endif %}
         {% endfor %}
 
   - type: conditional
@@ -47,6 +50,15 @@ cards:
         {% for item in state_attr('sensor.unused_custom_themes', 'unused_components') %}
         - **{{ item.name }}** 
           - File: `{{ item.file }}`
+          {% if item.repository %}
+          - Repository: [{{ item.repository }}]({{ item.repository }})
+          {% endif %}
+          {% if item.documentation %}
+          - Documentation: [{{ item.documentation }}]({{ item.documentation }})
+          {% endif %}
+          {% if item.installed_date %}
+          - Installed: {{ item.installed_date }}
+          {% endif %}
         {% endfor %}
 
   - type: conditional
@@ -61,4 +73,13 @@ cards:
         {% for item in state_attr('sensor.unused_frontend_resources', 'unused_components') %}
         - **{{ item.name }}** ({{ item.type }})
           - Path: `{{ item.path }}`
+          {% if item.repository %}
+          - Repository: [{{ item.repository }}]({{ item.repository }})
+          {% endif %}
+          {% if item.documentation %}
+          - Documentation: [{{ item.documentation }}]({{ item.documentation }})
+          {% endif %}
+          {% if item.installed_date %}
+          - Installed: {{ item.installed_date }}
+          {% endif %}
         {% endfor %}
