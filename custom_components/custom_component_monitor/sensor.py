@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -43,6 +49,109 @@ class ComponentScanner:
         self.hass = hass
         self.config_dir = Path(hass.config.config_dir)
 
+    def _get_installation_date(self, path: Path) -> str | None:
+        """Get the installation date of a component."""
+        try:
+            # Check if path exists
+            if not path.exists():
+                return None
+            
+            # Get the creation time (birth time on some systems) or modification time
+            stat = path.stat()
+            
+            # Use st_ctime (creation time on Windows, metadata change time on Unix)
+            # This is the best approximation for installation time
+            install_time = datetime.fromtimestamp(stat.st_ctime)
+            return install_time.isoformat()
+        except (OSError, ValueError) as ex:
+            _LOGGER.debug("Could not get installation date for %s: %s", path, ex)
+            return None
+
+    def _extract_hacs_repository_info(self, component_path: Path, component_type: str) -> dict[str, str]:
+        """Extract repository information from HACS metadata or other sources."""
+        repo_info = {"repository": "", "documentation": ""}
+        
+        try:
+            # Check for HACS info in the component directory
+            hacs_info_file = component_path / ".hacs_info"
+            if hacs_info_file.exists():
+                try:
+                    with open(hacs_info_file, encoding="utf-8") as f:
+                        hacs_data = json.load(f)
+                    repo_info["repository"] = hacs_data.get("repository", "")
+                    repo_info["documentation"] = hacs_data.get("documentation", "")
+                except (json.JSONDecodeError, FileNotFoundError):
+                    pass
+            
+            # Check for repository info in theme YAML files
+            if component_type == "theme" and component_path.suffix in [".yaml", ".yml"] and HAS_YAML:
+                try:
+                    with open(component_path, encoding="utf-8") as f:
+                        theme_data = yaml.safe_load(f)
+                    if isinstance(theme_data, dict):
+                        # Look for repository info in theme metadata
+                        for theme_name, theme_config in theme_data.items():
+                            if isinstance(theme_config, dict):
+                                repo_url = theme_config.get("repository", "")
+                                doc_url = theme_config.get("documentation", "")
+                                if repo_url:
+                                    repo_info["repository"] = repo_url
+                                if doc_url:
+                                    repo_info["documentation"] = doc_url
+                                break
+                except Exception:
+                    # Handle both YAML errors (if available) and other exceptions
+                    pass
+            
+            # Check for package.json in frontend resources
+            if component_type == "frontend":
+                package_json = component_path / "package.json"
+                if package_json.exists():
+                    try:
+                        with open(package_json, encoding="utf-8") as f:
+                            package_data = json.load(f)
+                        
+                        # Extract repository from package.json
+                        repo_data = package_data.get("repository", {})
+                        if isinstance(repo_data, dict):
+                            repo_info["repository"] = repo_data.get("url", "")
+                        elif isinstance(repo_data, str):
+                            repo_info["repository"] = repo_data
+                        
+                        # Extract homepage as documentation
+                        homepage = package_data.get("homepage", "")
+                        if homepage:
+                            repo_info["documentation"] = homepage
+                            
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        pass
+            
+            # Check parent directories for HACS metadata (common pattern)
+            parent_path = component_path.parent
+            for metadata_file in [".hacs_repository", "hacs.json", ".github/HACS_MANIFEST.json"]:
+                metadata_path = parent_path / metadata_file
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, encoding="utf-8") as f:
+                            if metadata_file.endswith(".json"):
+                                metadata = json.load(f)
+                            else:
+                                # Plain text repository URL
+                                repo_info["repository"] = f.read().strip()
+                                break
+                        
+                        if metadata_file.endswith(".json"):
+                            repo_info["repository"] = metadata.get("repository", "")
+                            repo_info["documentation"] = metadata.get("documentation", "")
+                            
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        continue
+            
+        except Exception as ex:
+            _LOGGER.debug("Error extracting repository info for %s: %s", component_path, ex)
+        
+        return repo_info
+
     async def scan_custom_integrations(self) -> dict[str, Any]:
         """Scan for custom integrations."""
         custom_components_path = self.config_dir / "custom_components"
@@ -76,6 +185,7 @@ class ComponentScanner:
                             "repository": repo_url,
                             "version": manifest.get("version", "unknown"),
                             "codeowners": manifest.get("codeowners", []),
+                            "installed_date": self._get_installation_date(item),
                         })
                     except (json.JSONDecodeError, FileNotFoundError) as ex:
                         _LOGGER.warning("Could not read manifest for %s: %s", item.name, ex)
@@ -114,10 +224,14 @@ class ComponentScanner:
         # Scan for theme files
         for item in themes_path.iterdir():
             if item.is_file() and item.suffix in [".yaml", ".yml"]:
+                repo_info = self._extract_hacs_repository_info(item, "theme")
                 installed_themes.append({
                     "name": item.stem,
                     "file": str(item.relative_to(self.config_dir)),
                     "full_path": str(item),
+                    "repository": repo_info["repository"],
+                    "documentation": repo_info["documentation"],
+                    "installed_date": self._get_installation_date(item),
                 })
 
         # Also check themes directory for subdirectories containing themes
@@ -125,10 +239,14 @@ class ComponentScanner:
             if item.is_dir() and not item.name.startswith("."):
                 for theme_file in item.iterdir():
                     if theme_file.is_file() and theme_file.suffix in [".yaml", ".yml"]:
+                        repo_info = self._extract_hacs_repository_info(theme_file, "theme")
                         installed_themes.append({
                             "name": f"{item.name}/{theme_file.stem}",
                             "file": str(theme_file.relative_to(self.config_dir)),
                             "full_path": str(theme_file),
+                            "repository": repo_info["repository"],
+                            "documentation": repo_info["documentation"],
+                            "installed_date": self._get_installation_date(theme_file),
                         })
 
         # Get current theme from frontend and check all configured themes
@@ -185,20 +303,28 @@ class ComponentScanner:
                 rel_path = f"{relative_path}/{item.name}" if relative_path else item.name
                 
                 if item.is_dir():
+                    repo_info = self._extract_hacs_repository_info(item, "frontend")
                     installed_frontend.append({
                         "name": rel_path,
                         "path": str(item.relative_to(self.config_dir)),
                         "type": "directory",
                         "full_path": str(item),
+                        "repository": repo_info["repository"],
+                        "documentation": repo_info["documentation"],
+                        "installed_date": self._get_installation_date(item),
                     })
                     scan_directory(item, rel_path)
                 elif item.suffix in [".js", ".css", ".html", ".json", ".map"]:
+                    repo_info = self._extract_hacs_repository_info(item, "frontend")
                     installed_frontend.append({
                         "name": rel_path,
                         "path": str(item.relative_to(self.config_dir)),
                         "type": "file",
                         "extension": item.suffix,
                         "full_path": str(item),
+                        "repository": repo_info["repository"],
+                        "documentation": repo_info["documentation"],
+                        "installed_date": self._get_installation_date(item),
                     })
 
         scan_directory(www_path)

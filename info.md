@@ -5,8 +5,9 @@ This integration monitors your Home Assistant installation for custom components
 ## Features
 
 - **Custom Integration Monitoring**: Scans your `custom_components` directory and identifies which integrations are installed but not configured
-- **Theme Monitoring**: Checks your custom themes and identifies unused ones
-- **Frontend Resource Monitoring**: Scans your `www` directory for custom frontend resources
+- **Theme Monitoring**: Checks your custom themes and identifies unused ones with repository links
+- **Frontend Resource Monitoring**: Scans your `www` directory for custom frontend resources with repository links
+- **Installation Date Tracking**: Shows when each component was first installed
 
 ## Sensors
 
@@ -14,15 +15,15 @@ The integration creates three sensors:
 
 1. **Unused Custom Integrations** (`sensor.unused_custom_integrations`)
    - Shows the count of unused custom integrations
-   - Attributes include detailed information about each unused integration with repository links
+   - Attributes include detailed information about each unused integration with repository links and installation dates
 
 2. **Unused Custom Themes** (`sensor.unused_custom_themes`)
    - Shows the count of unused custom themes
-   - Attributes include list of unused theme files
+   - Attributes include list of unused theme files with repository links and installation dates
 
 3. **Unused Frontend Resources** (`sensor.unused_frontend_resources`)
    - Shows the count of unused frontend resources in the www directory
-   - Attributes include list of potentially unused files and directories
+   - Attributes include list of potentially unused files and directories with repository links and installation dates
 
 ## Installation
 
@@ -57,7 +58,8 @@ After installation, you can:
 - View the sensor states in the Home Assistant dashboard
 - Create automations based on the sensor values
 - Use the detailed attribute data to identify specific unused components
-- Access repository links for unused integrations to easily remove them
+- Access repository links for unused integrations, themes, and frontend resources to easily remove them
+- Track when components were installed to help with maintenance decisions
 
 ## Support
 
