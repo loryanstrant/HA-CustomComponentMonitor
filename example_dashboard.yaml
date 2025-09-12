@@ -34,7 +34,7 @@ cards:
           - Version: {{ item.version }}
           {% endif %}
           {% if item.installed_date %}
-          - Installed: {{ item.installed_date }}
+          - Installed: {{ (now() - (item.installed_date | as_datetime | as_local)).days }} days ago
           {% endif %}
         {% endfor %}
 
@@ -57,7 +57,7 @@ cards:
           - Documentation: [{{ item.documentation }}]({{ item.documentation }})
           {% endif %}
           {% if item.installed_date %}
-          - Installed: {{ item.installed_date }}
+          - Installed: {{ (now() - (item.installed_date | as_datetime | as_local)).days }} days ago
           {% endif %}
         {% endfor %}
 
@@ -80,6 +80,6 @@ cards:
           - Documentation: [{{ item.documentation }}]({{ item.documentation }})
           {% endif %}
           {% if item.installed_date %}
-          - Installed: {{ item.installed_date }}
+          - Installed: {{ (now() - (item.installed_date | as_datetime | as_local)).days }} days ago
           {% endif %}
         {% endfor %}
