@@ -50,6 +50,184 @@ class ComponentScanner:
         self.config_dir = Path(hass.config.config_dir)
         self._hacs_repositories = None
 
+    def _should_exclude_frontend_path(self, path: Path) -> bool:
+        """Check if a frontend path should be excluded from scanning."""
+        path_str = str(path)
+        path_name = path.name
+        
+        # System directories and files that should be excluded
+        system_excludes = [
+            "@eaDir",           # Synology NAS system directory
+            ".DS_Store",        # macOS system file
+            "Thumbs.db",        # Windows thumbnail cache
+            ".syncthing",       # Syncthing sync tool
+            ".AppleDouble",     # macOS resource fork
+            "desktop.ini",      # Windows folder customization
+            ".git",             # Git repository data
+            "__pycache__",      # Python cache
+            ".svn",             # SVN repository data
+            ".hg",              # Mercurial repository data
+        ]
+        
+        # Check if path contains any system excludes
+        for exclude in system_excludes:
+            if exclude in path_str or path_name == exclude:
+                return True
+        
+        # Exclude paths with UUID-like patterns (device-specific directories)
+        import re
+        # Pattern for UUID-like strings (8-4-4-4-12 hex digits)
+        uuid_pattern = r'[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}'
+        # Pattern for long alphanumeric IDs (common in device directories)
+        device_id_pattern = r'[0-9A-Z]{20,}'
+        
+        if re.search(uuid_pattern, path_str, re.IGNORECASE) or re.search(device_id_pattern, path_str):
+            # Allow if it's clearly a HACS component directory
+            if any(component in path_str for component in ["community", "hacsfiles", "hacs-frontend"]):
+                return False
+            # Exclude device-specific directories like camera thumbnails, etc.
+            if any(keyword in path_str.lower() for keyword in ["thumb", "cache", "temp", "tmp"]):
+                return True
+        
+        # Exclude directories that look like user content (not component-related)
+        user_content_patterns = [
+            r'^www/[^/]+-[^/]+/(?:css|js|images?)(?:/.*)?$',  # Pattern like ha-tracker/css, my-project/images
+            r'^www/[^/]+_[^/]+/(?:css|js|images?)(?:/.*)?$',  # Pattern like my_project/css
+        ]
+        
+        for pattern in user_content_patterns:
+            if re.match(pattern, path_str):
+                # But don't exclude if it contains component indicators
+                component_indicators = ["community", "hacsfiles", "hacs-frontend", "custom-cards", "custom_cards", "lovelace"]
+                if not any(indicator in path_str.lower() for indicator in component_indicators):
+                    return True
+        
+        # Exclude common non-component file types in www directory
+        # Check by extension since we might not have the actual file
+        non_component_extensions = {
+            ".txt", ".md", ".doc", ".docx", ".pdf", ".rtf",      # Documents
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",    # Images (unless in component dirs)
+            ".mp4", ".avi", ".mov", ".wmv", ".mp3", ".wav",     # Media files
+            ".zip", ".rar", ".7z", ".tar", ".gz",               # Archives
+            ".exe", ".msi", ".dmg", ".deb", ".rpm",             # Executables
+            ".html", ".htm",                                     # HTML files (unless in component dirs)
+        }
+        
+        if path.suffix.lower() in non_component_extensions:
+            # Allow these file types only in component directories
+            component_indicators = ["community", "hacsfiles", "hacs-frontend", "themes", "custom-cards", "custom_cards"]
+            if any(component in path_str for component in component_indicators):
+                return False
+            # Otherwise exclude these file types when they're standalone
+            return True
+        
+        return False
+
+    def _is_frontend_resource_used(self, resource: dict[str, Any], local_path: str) -> bool:
+        """Enhanced check to determine if a frontend resource is used."""
+        try:
+            # Check if it's a HACS component (these are typically used)
+            if resource.get("hacs_status") != "not_hacs":
+                return True
+            
+            # Check for common frontend resource patterns that indicate usage
+            used_patterns = [
+                "custom-cards",     # Custom card directory
+                "custom_cards",     # Alternative naming
+                "lovelace-",        # Lovelace prefix
+                "card-",           # Card prefix
+                "button-card",     # Popular card
+                "mini-graph",      # Popular card
+                "mushroom",        # Popular card theme
+                "sidebar",         # UI modification
+                "kiosk",           # UI modification
+            ]
+            
+            for pattern in used_patterns:
+                if pattern in local_path.lower():
+                    return True
+            
+            # Check if resource is referenced in Home Assistant configuration files
+            config_files = [
+                self.hass.config.config_dir / "configuration.yaml",
+                self.hass.config.config_dir / "ui-lovelace.yaml",
+            ]
+            
+            for config_file in config_files:
+                if config_file.exists():
+                    try:
+                        with open(config_file, encoding="utf-8") as f:
+                            content = f.read()
+                            if local_path in content or resource["name"] in content:
+                                return True
+                    except (OSError, UnicodeDecodeError):
+                        continue
+            
+            # Check if it's in a dashboard configuration directory
+            dashboards_dir = self.hass.config.config_dir / "dashboards"
+            if dashboards_dir.exists():
+                for dashboard_file in dashboards_dir.glob("*.yaml"):
+                    try:
+                        with open(dashboard_file, encoding="utf-8") as f:
+                            content = f.read()
+                            if local_path in content or resource["name"] in content:
+                                return True
+                    except (OSError, UnicodeDecodeError):
+                        continue
+            
+            return False
+        except Exception as ex:
+            _LOGGER.debug("Error checking frontend resource usage for %s: %s", local_path, ex)
+            return False
+
+    def _is_theme_used(self, theme: dict[str, Any], current_theme: str, configured_themes: set) -> bool:
+        """Enhanced check to determine if a theme is used."""
+        theme_name = theme["name"]
+        theme_file = theme.get("file", "")
+        
+        # Basic checks
+        if (theme_name == current_theme or 
+            theme_name in configured_themes or
+            any(theme_name in str(configured) for configured in configured_themes)):
+            return True
+        
+        # Check for partial name matches (themes might use different naming conventions)
+        theme_base_name = theme_name.split("/")[-1] if "/" in theme_name else theme_name
+        theme_base_name = theme_base_name.replace("-", "_").replace("_", "-")
+        
+        for configured in configured_themes:
+            configured_base = configured.replace("-", "_").replace("_", "-")
+            if (theme_base_name.lower() in configured_base.lower() or
+                configured_base.lower() in theme_base_name.lower()):
+                return True
+        
+        # Check if theme is referenced in configuration files
+        try:
+            config_files = [
+                self.hass.config.config_dir / "configuration.yaml",
+                self.hass.config.config_dir / "themes.yaml",
+            ]
+            
+            for config_file in config_files:
+                if config_file.exists():
+                    try:
+                        with open(config_file, encoding="utf-8") as f:
+                            content = f.read()
+                            if (theme_name in content or 
+                                theme_base_name in content or
+                                (theme_file and theme_file in content)):
+                                return True
+                    except (OSError, UnicodeDecodeError):
+                        continue
+        except Exception as ex:
+            _LOGGER.debug("Error checking theme configuration files: %s", ex)
+        
+        # Check if it's a HACS theme (these are typically intended to be used)
+        if theme.get("hacs_status") != "not_hacs":
+            return True
+            
+        return False
+
     def _load_hacs_repositories(self) -> dict[str, Any]:
         """Load HACS repositories from .storage/hacs.repositories file."""
         if self._hacs_repositories is not None:
@@ -500,12 +678,7 @@ class ComponentScanner:
                 configured_themes.update(theme_data.themes.keys())
         
         for theme in installed_themes:
-            theme_name = theme["name"]
-            is_used = (
-                theme_name == current_theme or
-                theme_name in configured_themes or
-                any(theme_name in str(configured) for configured in configured_themes)
-            )
+            is_used = self._is_theme_used(theme, current_theme, configured_themes)
             
             if is_used:
                 used_themes.append(theme)
@@ -535,6 +708,10 @@ class ComponentScanner:
             """Recursively scan directory for frontend resources."""
             for item in path.iterdir():
                 if item.name.startswith("."):
+                    continue
+                
+                # Skip excluded paths
+                if self._should_exclude_frontend_path(item):
                     continue
                     
                 rel_path = f"{relative_path}/{item.name}" if relative_path else item.name
@@ -667,7 +844,8 @@ class ComponentScanner:
                 any(local_path in res for res in lovelace_resources) or
                 resource["name"] in ["community", "hacsfiles", "hacs-frontend"] or  # Common HACS directories
                 resource.get("extension") in [".map"] or  # Source maps are usually auto-generated
-                "node_modules" in resource["name"]  # Node modules
+                "node_modules" in resource["name"] or  # Node modules
+                self._is_frontend_resource_used(resource, local_path)  # Enhanced usage detection
             )
             
             if is_used:
