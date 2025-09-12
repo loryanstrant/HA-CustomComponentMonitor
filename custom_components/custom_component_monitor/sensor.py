@@ -267,7 +267,7 @@ class ComponentScanner:
             return self._hacs_repositories
 
     def _get_installation_date(self, path: Path | str) -> str | None:
-        """Get the installation date of a component."""
+        """Get the installation date of a component by looking at directory creation time."""
         try:
             # Convert string to Path if needed
             if isinstance(path, str):
@@ -277,11 +277,17 @@ class ComponentScanner:
             if not path.exists():
                 return None
             
-            # Get the creation time (birth time on some systems) or modification time
+            # If it's a file, get the directory it's in
+            if path.is_file():
+                path = path.parent
+            
+            # Try to get the actual directory creation time
+            # For directories, st_ctime on Unix is metadata change time, but for newly created
+            # directories this is usually close to creation time unless the directory was modified
             stat = path.stat()
             
             # Use st_ctime (creation time on Windows, metadata change time on Unix)
-            # This is the best approximation for installation time
+            # For directories, this is usually the installation time unless files were added later
             install_time = datetime.fromtimestamp(stat.st_ctime)
             return install_time.isoformat()
         except (OSError, ValueError) as ex:
@@ -333,27 +339,23 @@ class ComponentScanner:
                 if not name:
                     name = domain
                 
-                # Get installation date from local path if available
-                local_path = repo_data.get("local_path", "")
-                install_date = None
-                if local_path:
-                    # Try to construct a valid path
-                    try:
-                        if not Path(local_path).is_absolute():
-                            # If it's relative, make it relative to config directory
-                            local_path = str(self.config_dir / local_path)
-                        install_date = self._get_installation_date(local_path)
-                    except Exception:
-                        # Fallback: try to construct path from domain
-                        install_date = self._get_installation_date(
-                            self.config_dir / "custom_components" / domain
-                        )
+                # Get installation date by looking at the custom_components directory
+                # This ensures we get the actual installation date, not the last update date
+                install_date = self._get_installation_date(
+                    self.config_dir / "custom_components" / domain
+                )
                 
-                # If no installation date yet, try fallback path
+                # If that fails, try the HACS local path as a fallback
                 if install_date is None:
-                    install_date = self._get_installation_date(
-                        self.config_dir / "custom_components" / domain
-                    )
+                    local_path = repo_data.get("local_path", "")
+                    if local_path:
+                        try:
+                            if not Path(local_path).is_absolute():
+                                # If it's relative, make it relative to config directory
+                                local_path = str(self.config_dir / local_path)
+                            install_date = self._get_installation_date(local_path)
+                        except Exception as ex:
+                            _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
                 
                 installed_integrations.append({
                     "domain": domain,
@@ -424,41 +426,38 @@ class ComponentScanner:
                 if not display_name and full_name:
                     display_name = full_name.split("/")[-1] if "/" in full_name else full_name
                 
-                # Get installation date from local path if available
-                local_path = repo_data.get("local_path", "")
+                # Get installation date by looking at the themes directory first
+                # This ensures we get the actual installation date, not the last file modification date
                 install_date = None
                 theme_file_path = ""
                 
-                if local_path:
-                    theme_file_path = local_path
-                    # Try to construct a valid path
-                    try:
-                        if not Path(local_path).is_absolute():
-                            # If it's relative, make it relative to config directory
-                            local_path = str(self.config_dir / local_path)
-                        install_date = self._get_installation_date(local_path)
-                    except Exception:
-                        # Fallback: try themes directory
-                        theme_dir = self.config_dir / "themes"
-                        if theme_dir.exists():
-                            # Try display_name as directory first
-                            theme_fallback = theme_dir / display_name
-                            if not theme_fallback.exists():
-                                # Try with .yaml extension
-                                theme_fallback = theme_dir / f"{display_name}.yaml"
-                            install_date = self._get_installation_date(theme_fallback)
+                # Try to find theme directory in themes/ folder
+                theme_dir = self.config_dir / "themes"
+                if theme_dir.exists():
+                    # Try display_name as directory first
+                    theme_directory = theme_dir / display_name
+                    if theme_directory.exists() and theme_directory.is_dir():
+                        install_date = self._get_installation_date(theme_directory)
+                        theme_file_path = str(theme_directory.relative_to(self.config_dir))
+                    else:
+                        # Try with .yaml extension as a file
+                        theme_file = theme_dir / f"{display_name}.yaml"
+                        if theme_file.exists():
+                            install_date = self._get_installation_date(theme_file)
+                            theme_file_path = str(theme_file.relative_to(self.config_dir))
                 
-                # If no installation date yet, try fallback path
+                # If no installation date yet, try the HACS local path as fallback
                 if install_date is None:
-                    # Try to find theme files in themes directory
-                    theme_dir = self.config_dir / "themes"
-                    if theme_dir.exists():
-                        # Try display_name as directory first
-                        theme_fallback = theme_dir / display_name
-                        if not theme_fallback.exists():
-                            # Try with .yaml extension
-                            theme_fallback = theme_dir / f"{display_name}.yaml"
-                        install_date = self._get_installation_date(theme_fallback)
+                    local_path = repo_data.get("local_path", "")
+                    if local_path:
+                        theme_file_path = local_path
+                        try:
+                            if not Path(local_path).is_absolute():
+                                # If it's relative, make it relative to config directory
+                                local_path = str(self.config_dir / local_path)
+                            install_date = self._get_installation_date(local_path)
+                        except Exception as ex:
+                            _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
                 
                 installed_themes.append({
                     "name": display_name,
@@ -526,32 +525,48 @@ class ComponentScanner:
                 if not display_name and full_name:
                     display_name = full_name.split("/")[-1] if "/" in full_name else full_name
                 
-                # Get installation date from local path if available
-                local_path = repo_data.get("local_path", "")
+                # Get installation date by looking at the www/community directory first
+                # This ensures we get the actual installation date, not the last file modification date
                 install_date = None
                 resource_path = ""
                 
-                if local_path:
-                    try:
-                        # Convert to relative path from config directory if possible
-                        if Path(local_path).is_absolute():
-                            try:
-                                resource_path = str(Path(local_path).relative_to(self.config_dir))
-                            except ValueError:
-                                # If path is not relative to config dir, use as-is
-                                resource_path = local_path
-                        else:
-                            resource_path = local_path
-                            
-                        install_date = self._get_installation_date(local_path)
-                    except Exception:
-                        # Fallback: use the path as-is
-                        resource_path = local_path
+                # Try to find frontend resource directory in www/community/ folder first
+                community_dir = self.config_dir / "www" / "community"
+                if community_dir.exists():
+                    # Try display_name as directory
+                    resource_directory = community_dir / display_name
+                    if resource_directory.exists() and resource_directory.is_dir():
+                        install_date = self._get_installation_date(resource_directory)
+                        resource_path = str(resource_directory.relative_to(self.config_dir))
                 
-                # If no installation date yet, try fallback path using display_name
+                # If no installation date yet, try the HACS local path as fallback
+                if install_date is None:
+                    local_path = repo_data.get("local_path", "")
+                    if local_path:
+                        try:
+                            # Convert to relative path from config directory if possible
+                            if Path(local_path).is_absolute():
+                                try:
+                                    resource_path = str(Path(local_path).relative_to(self.config_dir))
+                                except ValueError:
+                                    # If path is not relative to config dir, use as-is
+                                    resource_path = local_path
+                            else:
+                                resource_path = local_path
+                                
+                            install_date = self._get_installation_date(local_path)
+                        except Exception as ex:
+                            _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
+                            # Fallback: use the path as-is
+                            resource_path = local_path
+                
+                # Final fallback: try www/ directory with display_name
                 if install_date is None:
                     fallback_path = self.config_dir / "www" / display_name
-                    install_date = self._get_installation_date(fallback_path)
+                    if fallback_path.exists():
+                        install_date = self._get_installation_date(fallback_path)
+                        if not resource_path:
+                            resource_path = str(fallback_path.relative_to(self.config_dir))
                 
                 installed_frontend.append({
                     "name": display_name,
