@@ -1,0 +1,13 @@
+{
+  "domain": "custom_component_monitor",
+  "name": "Custom Component Monitor",
+  "codeowners": ["@loryanstrant"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/loryanstrant/HA-CustomComponentMonitor",
+  "homeassistant": "2023.1.0",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/loryanstrant/HA-CustomComponentMonitor/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
