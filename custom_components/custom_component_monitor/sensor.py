@@ -654,6 +654,29 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}_{description.key}"
 
+    def _filter_component_for_attributes(self, component: dict[str, Any]) -> dict[str, Any]:
+        """Filter component data to include only essential fields for attributes.
+        
+        This reduces the size of state attributes to prevent exceeding the 16384 byte limit.
+        Removes: file, path, full_path, documentation, hacs_repository, type, codeowners, hacs_status
+        Keeps: name, installed_date, version, repository
+        """
+        filtered = {}
+        
+        # Keep essential identification and metadata
+        if "name" in component:
+            filtered["name"] = component["name"]
+        if "domain" in component:  # For integrations
+            filtered["domain"] = component["domain"]
+        if "installed_date" in component:
+            filtered["installed_date"] = component["installed_date"]
+        if "version" in component:
+            filtered["version"] = component["version"]
+        if "repository" in component:
+            filtered["repository"] = component["repository"]
+            
+        return filtered
+
     @property
     def native_value(self) -> int:
         """Return the native value of the sensor."""
@@ -677,10 +700,15 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
         else:
             data = {}
 
+        # Filter unused components to include only essential fields to reduce attribute size
+        unused_components = data.get("unused", [])
+        filtered_unused = [self._filter_component_for_attributes(component) 
+                          for component in unused_components]
+
         attributes = {
             ATTR_TOTAL_COMPONENTS: data.get("total", 0),
             ATTR_USED_COMPONENTS: len(data.get("used", [])),
-            ATTR_UNUSED_COMPONENTS: data.get("unused", []),
+            ATTR_UNUSED_COMPONENTS: filtered_unused,
         }
         
         # Add last scan time
