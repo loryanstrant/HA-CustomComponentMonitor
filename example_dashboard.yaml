@@ -30,6 +30,9 @@ cards:
           {% if item.repository %}
           - Repository: [{{ item.repository }}]({{ item.repository }})
           {% endif %}
+          {% if item.documentation %}
+          - Documentation: [{{ item.documentation }}]({{ item.documentation }})
+          {% endif %}
           {% if item.version != 'unknown' %}
           - Version: {{ item.version }}
           {% endif %}
@@ -56,6 +59,9 @@ cards:
           {% if item.documentation %}
           - Documentation: [{{ item.documentation }}]({{ item.documentation }})
           {% endif %}
+          {% if item.version != 'unknown' %}
+          - Version: {{ item.version }}
+          {% endif %}
           {% if item.installed_date %}
           - Installed: {{ (now() - (item.installed_date | as_datetime | as_local)).days }} days ago
           {% endif %}
@@ -78,6 +84,9 @@ cards:
           {% endif %}
           {% if item.documentation %}
           - Documentation: [{{ item.documentation }}]({{ item.documentation }})
+          {% endif %}
+          {% if item.version != 'unknown' %}
+          - Version: {{ item.version }}
           {% endif %}
           {% if item.installed_date %}
           - Installed: {{ (now() - (item.installed_date | as_datetime | as_local)).days }} days ago
