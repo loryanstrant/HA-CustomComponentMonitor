@@ -1,0 +1,64 @@
+# Example configuration for Home Assistant dashboard
+
+# Add to your Lovelace dashboard to display unused components
+type: vertical-stack
+cards:
+  - type: entities
+    title: Unused Custom Components
+    entities:
+      - entity: sensor.unused_custom_integrations
+        name: Unused Integrations
+        icon: mdi:puzzle-outline
+      - entity: sensor.unused_custom_themes  
+        name: Unused Themes
+        icon: mdi:palette-outline
+      - entity: sensor.unused_frontend_resources
+        name: Unused Frontend Resources
+        icon: mdi:web
+
+  - type: conditional
+    conditions:
+      - entity: sensor.unused_custom_integrations
+        state_not: "0"
+    card:
+      type: markdown
+      content: >
+        ## Unused Custom Integrations
+
+        {% for item in state_attr('sensor.unused_custom_integrations', 'unused_components') %}
+        - **{{ item.name }}** ({{ item.domain }})
+          {% if item.repository %}
+          - Repository: [{{ item.repository }}]({{ item.repository }})
+          {% endif %}
+          {% if item.version != 'unknown' %}
+          - Version: {{ item.version }}
+          {% endif %}
+        {% endfor %}
+
+  - type: conditional
+    conditions:
+      - entity: sensor.unused_custom_themes
+        state_not: "0"
+    card:
+      type: markdown
+      content: >
+        ## Unused Custom Themes
+
+        {% for item in state_attr('sensor.unused_custom_themes', 'unused_components') %}
+        - **{{ item.name }}** 
+          - File: `{{ item.file }}`
+        {% endfor %}
+
+  - type: conditional
+    conditions:
+      - entity: sensor.unused_frontend_resources
+        state_not: "0"  
+    card:
+      type: markdown
+      content: >
+        ## Unused Frontend Resources
+
+        {% for item in state_attr('sensor.unused_frontend_resources', 'unused_components') %}
+        - **{{ item.name }}** ({{ item.type }})
+          - Path: `{{ item.path }}`
+        {% endfor %}
