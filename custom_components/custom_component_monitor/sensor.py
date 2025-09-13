@@ -10,6 +10,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -513,6 +514,9 @@ class ComponentScanner:
             if (repo_data.get("category") == "plugin" and 
                 repo_data.get("installed", False)):
                 
+                # Initialize variables to avoid UnboundLocalError
+                local_path = ""
+                
                 # Extract repository information
                 full_name = repo_data.get("full_name", "")
                 repo_url = f"https://github.com/{full_name}" if full_name else ""
@@ -683,8 +687,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = CustomComponentMonitorCoordinator(hass)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        coordinator = CustomComponentMonitorCoordinator(hass)
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as ex:
+        _LOGGER.error("Failed to set up Custom Component Monitor: %s", ex)
+        raise ConfigEntryNotReady(f"Failed to initialize coordinator: {ex}") from ex
 
     entities = []
     for description in SENSOR_DESCRIPTIONS:
