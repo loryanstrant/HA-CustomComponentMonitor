@@ -69,23 +69,13 @@ Each sensor provides detailed attributes including:
 - Count of used components
 - List of unused components with metadata (names, versions, repository links, installation dates)
 
-## Example Automation
+## Example
+You can find the code for the below example in the [example-dashboard.yaml](https://github.com/loryanstrant/HA-CustomComponentMonitor/blob/main/example_dashboard.yaml) file.
 
-```yaml
-automation:
-  - alias: "Notify about unused components"
-    trigger:
-      - platform: state
-        entity_id: sensor.unused_custom_integrations
-    condition:
-      - condition: numeric_state
-        entity_id: sensor.unused_custom_integrations
-        above: 0
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "You have {{ states('sensor.unused_custom_integrations') }} unused custom integrations"
-```
+<img width="1374" height="944" alt="image" src="https://github.com/user-attachments/assets/944232c0-9fac-4c28-a2a9-6aa101617786" />
+
+
+
 
 ## Contributing
 
