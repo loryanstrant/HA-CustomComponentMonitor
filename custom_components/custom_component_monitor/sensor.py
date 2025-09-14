@@ -4,31 +4,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed, CoordinatorEntity
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    ATTR_TOTAL_COMPONENTS,
-    ATTR_UNUSED_COMPONENTS,
-    ATTR_USED_COMPONENTS,
+    DOMAIN, 
     DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
-    SENSOR_UNUSED_FRONTEND,
     SENSOR_UNUSED_INTEGRATIONS,
-    SENSOR_UNUSED_THEMES,
+    SENSOR_UNUSED_THEMES, 
+    SENSOR_UNUSED_FRONTEND,
+    ATTR_TOTAL_COMPONENTS,
+    ATTR_USED_COMPONENTS,
+    ATTR_UNUSED_COMPONENTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +63,12 @@ class ComponentScanner:
             _LOGGER.debug("Could not load storage file %s: %s", filename, ex)
             return {}
 
+    async def _load_hacs_repositories(self) -> dict[str, Any]:
+        """Load HACS repository data."""
+        if self._hacs_repositories is None:
+            self._hacs_repositories = await self._load_storage_file("hacs.repositories")
+        return self._hacs_repositories
+
     async def _get_configured_integrations(self) -> set[str]:
         """Get configured integration domains from core.config_entries."""
         config_entries_data = await self._load_storage_file("core.config_entries")
@@ -79,230 +82,547 @@ class ComponentScanner:
         _LOGGER.debug("Found configured domains: %s", configured_domains)
         return configured_domains
 
-    async def _get_used_themes_and_resources_from_storage(self) -> tuple[set[str], set[str]]:
-        """Get used themes and frontend resources from lovelace storage files."""
-        storage_dir = self.config_dir / ".storage"
-        themes_used = set()
-        resources_used = set()
-        
-        if not storage_dir.exists():
-            _LOGGER.debug("Storage directory not found: %s", storage_dir)
-            return themes_used, resources_used
-        
-        # Use executor to avoid blocking on directory listing
-        def _list_lovelace_files():
-            lovelace_files = []
-            for file_path in storage_dir.iterdir():
-                if file_path.is_file() and file_path.name.startswith("lovelace"):
-                    lovelace_files.append(file_path)
-            return lovelace_files
-        
-        lovelace_files = await self.hass.async_add_executor_job(_list_lovelace_files)
-        
-        _LOGGER.debug("Found %d lovelace files: %s", len(lovelace_files), 
-                     [f.name for f in lovelace_files])
-        
-        for file_path in lovelace_files:
-            _LOGGER.debug("Processing lovelace file: %s", file_path.name)
-            try:
-                # Use executor to avoid blocking on file read
-                def _read_lovelace_file():
-                    with open(file_path, encoding="utf-8") as f:
-                        return json.load(f)
-                
-                data = await self.hass.async_add_executor_job(_read_lovelace_file)
-                
-                config = data.get("data", {}).get("config", {})
-                if not config:
-                    _LOGGER.debug("Skipping %s: no config section found", file_path.name)
-                    continue
-                
-                _LOGGER.debug("Processing config from %s", file_path.name)
-                
-                # Check for theme at root level
-                if "theme" in config:
-                    themes_used.add(config["theme"])
-                    _LOGGER.debug("Found root theme '%s' in %s", config["theme"], file_path.name)
-                
-                # Check for themes in views
-                for i, view in enumerate(config.get("views", [])):
-                    if "theme" in view:
-                        themes_used.add(view["theme"])
-                        _LOGGER.debug("Found view theme '%s' in %s view %d", view["theme"], file_path.name, i)
-                
-                # Check for frontend resources
-                for i, resource in enumerate(config.get("resources", [])):
-                    url = resource.get("url", "")
-                    if url.startswith("/hacsfiles/"):
-                        # Extract component name from path
-                        parts = url.split("/")
-                        if len(parts) >= 3:
-                            component_name = parts[2]  # /hacsfiles/component-name/file.js
-                            resources_used.add(component_name)
-                            _LOGGER.debug("Found resource '%s' from URL '%s' in %s", 
-                                         component_name, url, file_path.name)
-                
-                # Check for custom card types in cards
-                def extract_custom_cards(cards, file_name, view_index=None, depth=0):
-                    custom_cards = set()
-                    if not isinstance(cards, list):
-                        return custom_cards
-                    
-                    for j, card in enumerate(cards):
-                        if isinstance(card, dict):
-                            card_type = card.get("type", "")
-                            if card_type.startswith("custom:"):
-                                card_name = card_type[7:]  # Remove "custom:" prefix
-                                custom_cards.add(card_name)
-                                location = f"{file_name}"
-                                if view_index is not None:
-                                    location += f" view {view_index}"
-                                if depth > 0:
-                                    location += f" depth {depth}"
-                                _LOGGER.debug("Found custom card '%s' in %s", card_name, location)
-                            
-                            # Recursively check nested cards
-                            if "cards" in card:
-                                nested_cards = extract_custom_cards(
-                                    card["cards"], file_name, view_index, depth + 1
-                                )
-                                custom_cards.update(nested_cards)
-                    
-                    return custom_cards
-                
-                for i, view in enumerate(config.get("views", [])):
-                    if "cards" in view:
-                        view_custom_cards = extract_custom_cards(view["cards"], file_path.name, i)
-                        resources_used.update(view_custom_cards)
-                        
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError) as ex:
-                _LOGGER.warning("Error processing lovelace file %s: %s", file_path.name, ex)
-                continue
-        
-        _LOGGER.debug("Found used themes: %s", themes_used)
-        _LOGGER.debug("Found used resources: %s", resources_used)
-        return themes_used, resources_used
-
-    async def _is_frontend_resource_used(self, resource: dict[str, Any], local_path: str) -> bool:
-        """Check if a frontend resource is used by scanning lovelace storage files."""
+    def _get_installation_date(self, path: str | Path) -> str | None:
+        """Get installation date from file or directory."""
         try:
-            _, resources_used = await self._get_used_themes_and_resources_from_storage()
+            path_obj = Path(path) if isinstance(path, str) else path
+            if not path_obj.exists():
+                return None
             
-            # Get resource name from the HACS repository name or path
-            resource_name = resource.get("name", "")
-            hacs_repo = resource.get("hacs_repository", "")
+            # For directories, get the creation time of the directory itself
+            # For files, get the creation time of the file
+            stat_info = path_obj.stat()
             
-            # Extract component name from repository name
-            if hacs_repo and "/" in hacs_repo:
-                repo_name = hacs_repo.split("/")[-1]
+            # Use birth time if available (macOS/Windows), otherwise fall back to ctime
+            if hasattr(stat_info, 'st_birthtime'):
+                timestamp = stat_info.st_birthtime
             else:
-                repo_name = resource_name
+                # On Linux, use the earliest of ctime and mtime
+                timestamp = min(stat_info.st_ctime, stat_info.st_mtime)
             
-            # Check various name patterns
-            name_variants = {resource_name, repo_name}
-            if local_path:
-                # Extract name from local path
-                if local_path.startswith("www/"):
-                    path_name = local_path[4:].split("/")[0]
-                    name_variants.add(path_name)
+            # Convert to ISO format string
+            return datetime.fromtimestamp(timestamp).isoformat()
             
-            # Check if any variant matches
-            for variant in name_variants:
-                if variant in resources_used:
-                    return True
-            
-            return False
         except Exception as ex:
-            _LOGGER.debug("Error checking frontend resource usage for %s: %s", local_path, ex)
-            return False
+            _LOGGER.debug("Could not get installation date for %s: %s", path, ex)
+            return None
 
-    async def _is_theme_used(self, theme: dict[str, Any], current_theme: str, configured_themes: set) -> bool:
-        """Check if a theme is used by scanning lovelace storage files."""
-        theme_name = theme["name"]
+    async def _get_theme_names_from_file(self, theme_path: str | Path) -> list[str]:
+        """Extract theme names from a theme file."""
+        try:
+            path_obj = Path(theme_path) if isinstance(theme_path, str) else theme_path
+            
+            # Handle both files and directories
+            theme_files = []
+            if path_obj.is_file():
+                theme_files = [path_obj]
+            elif path_obj.is_dir():
+                # Look for .yaml files in the directory
+                theme_files = list(path_obj.glob("*.yaml")) + list(path_obj.glob("*.yml"))
+            
+            if not theme_files:
+                _LOGGER.debug("No theme files found in %s", theme_path)
+                return []
+            
+            all_theme_names = []
+            
+            for theme_file in theme_files:
+                if not theme_file.exists():
+                    continue
+                    
+                def _read_theme_file():
+                    with open(theme_file, encoding="utf-8") as f:
+                        content = f.read()
+                    return content
+                
+                content = await self.hass.async_add_executor_job(_read_theme_file)
+                
+                # Extract theme names from YAML content
+                # Theme names are top-level keys in the YAML file
+                theme_names = []
+                lines = content.split('\n')
+                
+                for line in lines:
+                    stripped_line = line.strip()
+                    # Look for top-level YAML keys (theme names)
+                    # Skip empty lines, comments, and indented lines (including YAML doc separators)
+                    if (stripped_line and 
+                        not stripped_line.startswith('#') and 
+                        not stripped_line.startswith('---') and  # YAML document separator
+                        not line.startswith(' ') and 
+                        not line.startswith('\t') and
+                        ':' in stripped_line):
+                        
+                        theme_name = stripped_line.split(':')[0].strip()
+                        # Remove any quotes from theme name
+                        theme_name = theme_name.strip('"\'')
+                        
+                        # Additional validation: theme names shouldn't contain certain characters
+                        # and should be reasonable names (not CSS variables)
+                        if (theme_name and 
+                            not theme_name.startswith('#') and
+                            not theme_name.startswith('-') and  # CSS variables start with --
+                            not theme_name.startswith('paper-') and  # Skip paper variables
+                            not theme_name.startswith('ha-') and  # Skip HA variables
+                            not theme_name.endswith('-color') and  # Skip color variables
+                            len(theme_name) < 50):  # Reasonable length check
+                            theme_names.append(theme_name)
+                            _LOGGER.debug("Found valid theme name: %s", theme_name)
+                
+                _LOGGER.debug("Found theme names in %s: %s", theme_file, theme_names)
+                all_theme_names.extend(theme_names)
+            
+            # Remove duplicates while preserving order
+            unique_theme_names = []
+            seen = set()
+            for name in all_theme_names:
+                if name not in seen:
+                    seen.add(name)
+                    unique_theme_names.append(name)
+            
+            _LOGGER.debug("Final theme names from %s: %s", theme_path, unique_theme_names)
+            return unique_theme_names
+            
+        except Exception as ex:
+            _LOGGER.debug("Could not read theme file/directory %s: %s", theme_path, ex)
+            return []
+
+    async def _get_frontend_resource_types(self, resource_path: str | Path, resource_name: str) -> list[str]:
+        """Extract custom card types from a frontend resource."""
+        try:
+            path_obj = Path(resource_path) if isinstance(resource_path, str) else resource_path
+            if not path_obj.exists():
+                return []
+            
+            custom_types = []
+            
+            # If it's a directory, look for JS files
+            if path_obj.is_dir():
+                js_files = list(path_obj.glob("*.js"))
+                for js_file in js_files:
+                    types = await self._extract_types_from_js_file(js_file, resource_name)
+                    custom_types.extend(types)
+            elif path_obj.suffix == '.js':
+                types = await self._extract_types_from_js_file(path_obj, resource_name)
+                custom_types.extend(types)
+            
+            _LOGGER.debug("Found custom types in %s: %s", resource_path, custom_types)
+            return list(set(custom_types))  # Remove duplicates
+            
+        except Exception as ex:
+            _LOGGER.debug("Could not analyze frontend resource %s: %s", resource_path, ex)
+            return []
+
+    async def _extract_types_from_js_file(self, js_file: Path, resource_name: str) -> list[str]:
+        """Extract custom element types from a JavaScript file."""
+        try:
+            def _read_js_file():
+                with open(js_file, encoding="utf-8", errors="ignore") as f:
+                    return f.read()
+            
+            content = await self.hass.async_add_executor_job(_read_js_file)
+            
+            custom_types = []
+            
+            # PRIMARY: Look for custom cards registry first (most reliable for Lovelace cards)
+            registry_patterns = [
+                r'window\.customCards\s*=\s*window\.customCards\s*\|\|\s*\[\];\s*window\.customCards\.push\s*\(\s*\{\s*type:\s*[\'"]([^\'\"]+)[\'"]',
+                r'window\.customCards\.push\s*\(\s*\{\s*type:\s*[\'"]([^\'\"]+)[\'"]',
+                r'customCards\.push\s*\(\s*\{\s*type:\s*[\'"]([^\'\"]+)[\'"]',
+            ]
+            
+            for pattern in registry_patterns:
+                matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
+                for match in matches:
+                    if match and match.strip():
+                        card_type = match.strip()
+                        custom_types.append(card_type)
+                        if not card_type.startswith('custom:'):
+                            custom_types.append(f"custom:{card_type}")
+                        _LOGGER.debug("Found customCards registration: %s in %s", card_type, js_file.name)
+            
+            # SECONDARY: customElements.define() patterns - only if no card registry found
+            if not custom_types:
+                define_patterns = [
+                    # Standard patterns for customElements.define
+                    r'customElements\.define\s*\(\s*[\'"]([^\'\"]+)[\'"]',
+                    r'window\.customElements\.define\s*\(\s*[\'"]([^\'\"]+)[\'"]',
+                    # Patterns with variable spacing and quotes
+                    r'customElements\s*\.\s*define\s*\(\s*[\'"]([^\'\"]+)[\'"]',
+                    r'window\s*\.\s*customElements\s*\.\s*define\s*\(\s*[\'"]([^\'\"]+)[\'"]',
+                ]
+                
+                # Extract from customElements.define() calls
+                for pattern in define_patterns:
+                    matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+                    for match in matches:
+                        if match and match.strip():
+                            element_name = match.strip()
+                            # Add the element name as found
+                            custom_types.append(element_name)
+                            # Also add with custom: prefix if not already present
+                            if not element_name.startswith('custom:'):
+                                custom_types.append(f"custom:{element_name}")
+                            _LOGGER.debug("Found customElements.define: %s in %s", element_name, js_file.name)
+            
+            # TERTIARY: Look for class definitions that might indicate custom elements - only if nothing found yet
+            if not custom_types:
+                class_patterns = [
+                    r'class\s+(\w*[Cc]ard)\s+extends\s+',
+                    r'class\s+(\w*[Ee]lement)\s+extends\s+',
+                    r'class\s+(\w+)\s+extends\s+LitElement',
+                    r'class\s+(\w+)\s+extends\s+HTMLElement',
+                ]
+                
+                for pattern in class_patterns:
+                    matches = re.findall(pattern, content)
+                    for match in matches:
+                        if match and len(match) > 2:  # Skip very short matches
+                            # Convert CamelCase to kebab-case
+                            kebab_name = re.sub(r'(?<!^)(?=[A-Z])', '-', match).lower()
+                            custom_types.append(kebab_name)
+                            custom_types.append(f"custom:{kebab_name}")
+                            _LOGGER.debug("Found class definition: %s -> %s in %s", match, kebab_name, js_file.name)
+            
+            # FALLBACK: Smart fallback based on resource name and common patterns - only if nothing found
+            if not custom_types and resource_name:
+                resource_lower = resource_name.lower().replace('_', '-').replace(' ', '-')
+                
+                # Create smart patterns based on common naming conventions
+                fallback_patterns = []
+                
+                # Remove common suffixes/prefixes to get base name
+                base_name = resource_lower
+                for suffix in ['-card', '_card', '-element', '_element']:
+                    if base_name.endswith(suffix):
+                        base_name = base_name[:-len(suffix)]
+                        break
+                
+                # Common patterns based on resource name
+                fallback_patterns = [
+                    base_name,
+                    f"{base_name}-card",
+                    resource_lower,
+                    f"{resource_lower}-card",
+                ]
+                
+                # Also try patterns with custom: prefix
+                for pattern in fallback_patterns.copy():
+                    if not pattern.startswith('custom:'):
+                        fallback_patterns.append(f"custom:{pattern}")
+                
+                # Add to list only if we didn't find any explicit definitions
+                if not any(t for t in custom_types if not t.startswith('custom:')):
+                    custom_types.extend(fallback_patterns)
+                    _LOGGER.debug("Added fallback patterns for %s: %s", resource_name, fallback_patterns)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_types = []
+            for custom_type in custom_types:
+                if custom_type not in seen and custom_type.strip():
+                    seen.add(custom_type)
+                    unique_types.append(custom_type)
+            
+            _LOGGER.debug("Final extracted types from %s: %s", js_file.name, unique_types)
+            return unique_types
+            
+        except Exception as ex:
+            _LOGGER.debug("Could not read JS file %s: %s", js_file, ex)
+            return []
+
+    async def _check_theme_usage(self, theme_name: str) -> bool:
+        """Check if a specific theme name is used anywhere in the configuration."""
+        _LOGGER.debug("Checking theme usage for: %s", theme_name)
         
-        # Get used themes from storage files
-        themes_used, _ = await self._get_used_themes_and_resources_from_storage()
+        # Check core.config for theme configuration (case-insensitive)
+        core_config = await self._load_storage_file("core.config")
+        frontend_config = core_config.get("frontend", {})
         
-        # Check direct name match
-        if theme_name in themes_used:
+        # Check if theme is set as default theme
+        default_theme = frontend_config.get("theme")
+        if default_theme and default_theme.lower() == theme_name.lower():
+            _LOGGER.debug("Theme %s found as default theme", theme_name)
             return True
-        
-        # Check for partial name matches (themes might use different naming conventions)
-        theme_base_name = theme_name.split("/")[-1] if "/" in theme_name else theme_name
-        theme_base_name = theme_base_name.replace("-", "_").replace("_", "-")
-        
-        for used_theme in themes_used:
-            used_base = used_theme.replace("-", "_").replace("_", "-")
-            if (theme_base_name.lower() in used_base.lower() or
-                used_base.lower() in theme_base_name.lower()):
+            
+        # Check user profiles for theme usage (case-insensitive)
+        auth_data = await self._load_storage_file("auth")
+        for user in auth_data.get("users", []):
+            user_data = user.get("user_data", {})
+            user_theme = user_data.get("theme")
+            if user_theme and user_theme.lower() == theme_name.lower():
+                _LOGGER.debug("Theme %s found in user profile", theme_name)
                 return True
         
-        # Also check HACS repository name
-        hacs_repo = theme.get("hacs_repository", "")
-        if hacs_repo and "/" in hacs_repo:
-            repo_name = hacs_repo.split("/")[-1]
-            if repo_name in themes_used:
-                return True
+        # Check all lovelace configurations for theme usage
+        storage_dir = self.config_dir / ".storage"
+        if storage_dir.exists():
+            # Get all files that start with "lovelace" using executor
+            def _get_lovelace_files():
+                lovelace_files = []
+                for storage_file in storage_dir.iterdir():
+                    if storage_file.is_file() and storage_file.name.startswith("lovelace"):
+                        lovelace_files.append(storage_file.name)
+                return lovelace_files
+            
+            lovelace_files = await self.hass.async_add_executor_job(_get_lovelace_files)
+            _LOGGER.debug("Found lovelace files: %s", lovelace_files)
+            
+            for filename in lovelace_files:
+                _LOGGER.debug("Checking lovelace config: %s for theme %s", filename, theme_name)
+                
+                try:
+                    # Read using the _load_storage_file method but get full structure
+                    storage_path = storage_dir / filename
+                    def _read_full_storage_file():
+                        with open(storage_path, encoding="utf-8") as f:
+                            return json.load(f)
+                    
+                    full_data = await self.hass.async_add_executor_job(_read_full_storage_file)
+                    
+                    # Check in data.config section
+                    data_section = full_data.get("data", {})
+                    config_data = data_section.get("config", {})
+                    
+                    # Check if theme is used in lovelace configuration
+                    if self._check_theme_in_lovelace(config_data, theme_name):
+                        _LOGGER.debug("Theme %s found in %s", theme_name, filename)
+                        return True
+                    
+                    # Also check top-level data for theme references
+                    if self._check_theme_in_lovelace(data_section, theme_name):
+                        _LOGGER.debug("Theme %s found in data section of %s", theme_name, filename)
+                        return True
+                        
+                except Exception as ex:
+                    _LOGGER.debug("Error reading lovelace file %s: %s", filename, ex)
+        
+        _LOGGER.debug("Theme %s not found in any configuration", theme_name)
+        return False
+
+    def _check_theme_in_lovelace(self, config: dict, theme_name: str) -> bool:
+        """Recursively check if theme is used in lovelace configuration."""
+        if not isinstance(config, dict):
+            return False
+        
+        # Check for theme key at current level (case-insensitive)
+        current_theme = config.get("theme")
+        if current_theme:
+            if isinstance(current_theme, str):
+                if current_theme.lower() == theme_name.lower():
+                    return True
+            elif isinstance(current_theme, dict):
+                # Handle theme objects like {'selected_theme': 'themename'}
+                for key, value in current_theme.items():
+                    if isinstance(value, str) and value.lower() == theme_name.lower():
+                        return True
+        
+        # Check for theme in views
+        views = config.get("views", [])
+        if isinstance(views, list):
+            for view in views:
+                if isinstance(view, dict):
+                    view_theme = view.get("theme")
+                    if view_theme and isinstance(view_theme, str):
+                        if view_theme.lower() == theme_name.lower():
+                            return True
+        
+        # Recursively check all nested structures
+        for key, value in config.items():
+            if key == "theme" and isinstance(value, str):
+                if value.lower() == theme_name.lower():
+                    return True
+            elif isinstance(value, dict):
+                if self._check_theme_in_lovelace(value, theme_name):
+                    return True
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict) and self._check_theme_in_lovelace(item, theme_name):
+                        return True
+                        
+        return False
+
+    async def _is_frontend_resource_registered(self, resource_name: str, resource_path: str) -> bool:
+        """Check if a frontend resource is registered in lovelace_resources."""
+        _LOGGER.debug("Checking if frontend resource %s is registered", resource_name)
+        
+        # Load lovelace_resources storage
+        lovelace_resources = await self._load_storage_file("lovelace_resources")
+        registered_resources = lovelace_resources.get("items", [])
+        
+        if not registered_resources:
+            _LOGGER.debug("No registered lovelace resources found")
+            return False
+        
+        # Create possible URL patterns for this resource
+        # HACS uses /hacsfiles/ as a virtual path that maps to www/community/
+        possible_patterns = []
+        
+        if resource_name:
+            # Normalize the resource name to create multiple possible URL patterns
+            normalized_names = [
+                resource_name,  # Original name
+                resource_name.lower(),  # Lowercase
+                resource_name.lower().replace(' ', '-'),  # Spaces to dashes
+                resource_name.lower().replace(' ', '_'),  # Spaces to underscores
+                resource_name.replace(' ', '-'),  # Spaces to dashes (preserve case)
+                resource_name.replace(' ', '_'),  # Spaces to underscores (preserve case)
+                resource_name.replace('_', '-'),  # Underscores to dashes
+                resource_name.replace('-', '_'),  # Dashes to underscores
+            ]
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_names = []
+            for name in normalized_names:
+                if name not in seen:
+                    seen.add(name)
+                    unique_names.append(name)
+            
+            # HACS pattern: /hacsfiles/{resource_name}/
+            for name in unique_names:
+                possible_patterns.append(f"/hacsfiles/{name}/")
+        
+        # Check against the actual www/community path structure
+        if resource_path and resource_path.startswith("www/community/"):
+            community_path = resource_path[14:]  # Remove "www/community/" prefix (14 chars)
+            resource_dir = community_path.split('/')[0] if '/' in community_path else community_path
+            if resource_dir:  # Only add if not empty
+                possible_patterns.append(f"/hacsfiles/{resource_dir}/")
+            
+            # Also add the directory name to the normalized names list for broader matching
+            if resource_dir and resource_dir not in possible_patterns:
+                possible_patterns.append(f"/hacsfiles/{resource_dir}/")
+        
+        # Check if any registered resource matches our patterns
+        for resource in registered_resources:
+            resource_url = resource.get("url", "")
+            if resource_url:
+                # Strip HACS tag parameters for matching
+                clean_url = resource_url.split('?')[0] if '?' in resource_url else resource_url
+                
+                for pattern in possible_patterns:
+                    if clean_url.startswith(pattern):
+                        _LOGGER.debug("Found matching registered resource: %s (clean: %s) matches pattern %s", resource_url, clean_url, pattern)
+                        return True
+        
+        _LOGGER.debug("Resource %s not found in registered lovelace resources", resource_name)
+        _LOGGER.debug("Checked patterns: %s", possible_patterns)
+        _LOGGER.debug("Available resources: %s", [r.get("url", "") for r in registered_resources])
+        return False
+
+    async def _get_registered_resource_info(self, resource_name: str) -> dict[str, str]:
+        """Get information about a registered frontend resource."""
+        lovelace_resources = await self._load_storage_file("lovelace_resources")
+        registered_resources = lovelace_resources.get("items", [])
+        
+        # Find the matching resource
+        for resource in registered_resources:
+            resource_url = resource.get("url", "")
+            if resource_name.lower() in resource_url.lower():
+                return {
+                    "url": resource_url,
+                    "type": resource.get("type", "module"),
+                    "id": resource.get("id", "")
+                }
+        
+        return {}
+    async def _check_frontend_resource_usage(self, custom_type: str, resource_name: str) -> bool:
+        """Check if a custom type is used in any Lovelace configuration."""
+        _LOGGER.debug("Checking frontend resource: %s (type: %s)", resource_name, custom_type)
+        
+        # Check all lovelace configurations
+        storage_dir = self.config_dir / ".storage"
+        if storage_dir.exists():
+            # Get all files that start with "lovelace" using executor
+            def _get_lovelace_files():
+                lovelace_files = []
+                for storage_file in storage_dir.iterdir():
+                    if storage_file.is_file() and storage_file.name.startswith("lovelace"):
+                        # Skip lovelace_resources and lovelace_dashboards as they don't contain card usage
+                        if storage_file.name not in ["lovelace_resources", "lovelace_dashboards"]:
+                            lovelace_files.append(storage_file.name)
+                return lovelace_files
+            
+            lovelace_files = await self.hass.async_add_executor_job(_get_lovelace_files)
+            
+            for filename in lovelace_files:
+                _LOGGER.debug("Checking lovelace config for custom type: %s in %s", custom_type, filename)
+                
+                try:
+                    # Read using the full file path
+                    storage_path = storage_dir / filename
+                    def _read_full_storage_file():
+                        with open(storage_path, encoding="utf-8") as f:
+                            return json.load(f)
+                    
+                    full_data = await self.hass.async_add_executor_job(_read_full_storage_file)
+                    
+                    # Check in data.config section
+                    data_section = full_data.get("data", {})
+                    config_data = data_section.get("config", {})
+                    
+                    # Check if custom type is used in lovelace configuration
+                    if self._check_custom_type_in_lovelace(config_data, custom_type):
+                        _LOGGER.debug("Custom type %s found in %s", custom_type, filename)
+                        return True
+                    
+                    # Also check top-level data for custom type references
+                    if self._check_custom_type_in_lovelace(data_section, custom_type):
+                        _LOGGER.debug("Custom type %s found in data section of %s", custom_type, filename)
+                        return True
+                        
+                except Exception as ex:
+                    _LOGGER.debug("Error reading lovelace file %s: %s", filename, ex)
         
         return False
 
-    async def _load_hacs_repositories(self) -> dict[str, Any]:
-        """Load HACS repositories from .storage/hacs.repositories file."""
-        if self._hacs_repositories is not None:
-            return self._hacs_repositories
+    def _check_custom_type_in_lovelace(self, config: dict, custom_type: str) -> bool:
+        """Recursively check if custom type is used in lovelace configuration."""
+        if not isinstance(config, dict):
+            return False
             
-        try:
-            hacs_storage_path = self.config_dir / ".storage" / "hacs.repositories"
-            if not hacs_storage_path.exists():
-                _LOGGER.debug("HACS repositories file not found at %s", hacs_storage_path)
-                self._hacs_repositories = {}
-                return self._hacs_repositories
-                
-            # Use run_in_executor to avoid blocking the event loop
-            def _read_file():
-                with open(hacs_storage_path, encoding="utf-8") as f:
-                    return json.load(f)
+        # Check for type key at current level
+        current_type = config.get("type")
+        if current_type:
+            # Direct match
+            if current_type == custom_type:
+                return True
             
-            hacs_data = await self.hass.async_add_executor_job(_read_file)
-                
-            # Extract repositories data
-            repositories = hacs_data.get("data", {})
-            _LOGGER.debug("Loaded %d repositories from HACS storage", len(repositories))
-            self._hacs_repositories = repositories
-            return self._hacs_repositories
+            # Check without the custom: prefix
+            if custom_type.startswith("custom:"):
+                short_type = custom_type[7:]  # Remove "custom:" prefix
+                if current_type == short_type:
+                    return True
+                # Also try with "custom:" prefix if the current type doesn't have it
+                if current_type == f"custom:{short_type}":
+                    return True
             
-        except (json.JSONDecodeError, FileNotFoundError, OSError) as ex:
-            _LOGGER.warning("Could not load HACS repositories file: %s", ex)
-            self._hacs_repositories = {}
-            return self._hacs_repositories
-
-    def _get_installation_date(self, path: Path | str) -> str | None:
-        """Get the installation date of a component by looking at directory creation time."""
-        try:
-            # Convert string to Path if needed
-            if isinstance(path, str):
-                path = Path(path)
+            # Check with custom: prefix added
+            if not current_type.startswith("custom:"):
+                prefixed_type = f"custom:{current_type}"
+                if prefixed_type == custom_type:
+                    return True
             
-            # Check if path exists
-            if not path.exists():
-                return None
+            # Flexible matching for common variations
+            # Convert both to lowercase and remove separators for comparison
+            normalized_custom = custom_type.lower().replace("custom:", "").replace("-", "").replace("_", "")
+            normalized_current = current_type.lower().replace("custom:", "").replace("-", "").replace("_", "")
             
-            # If it's a file, get the directory it's in
-            if path.is_file():
-                path = path.parent
-            
-            # Try to get the actual directory creation time
-            # For directories, st_ctime on Unix is metadata change time, but for newly created
-            # directories this is usually close to creation time unless the directory was modified
-            stat = path.stat()
-            
-            # Use st_ctime (creation time on Windows, metadata change time on Unix)
-            # For directories, this is usually the installation time unless files were added later
-            install_time = datetime.fromtimestamp(stat.st_ctime)
-            return install_time.isoformat()
-        except (OSError, ValueError) as ex:
-            _LOGGER.debug("Could not get installation date for %s: %s", path, ex)
-            return None
+            if normalized_custom == normalized_current:
+                return True
+        
+        # Recursively check all nested structures
+        for key, value in config.items():
+            if isinstance(value, dict):
+                if self._check_custom_type_in_lovelace(value, custom_type):
+                    return True
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict) and self._check_custom_type_in_lovelace(item, custom_type):
+                        return True
+                        
+        return False
 
     async def scan_custom_integrations(self) -> dict[str, Any]:
         """Scan for HACS-installed custom integrations."""
@@ -436,38 +756,57 @@ class ComponentScanner:
                 if not display_name and full_name:
                     display_name = full_name.split("/")[-1] if "/" in full_name else full_name
                 
-                # Get installation date by looking at the themes directory first
-                # This ensures we get the actual installation date, not the last file modification date
+                # Get installation date - try multiple approaches
                 install_date = None
                 theme_file_path = ""
                 
-                # Try to find theme directory in themes/ folder
-                theme_dir = self.config_dir / "themes"
-                if theme_dir.exists():
-                    # Try display_name as directory first
-                    theme_directory = theme_dir / display_name
-                    if theme_directory.exists() and theme_directory.is_dir():
-                        install_date = self._get_installation_date(theme_directory)
-                        theme_file_path = str(theme_directory.relative_to(self.config_dir))
-                    else:
-                        # Try with .yaml extension as a file
-                        theme_file = theme_dir / f"{display_name}.yaml"
-                        if theme_file.exists():
-                            install_date = self._get_installation_date(theme_file)
-                            theme_file_path = str(theme_file.relative_to(self.config_dir))
+                # First, try the HACS local path which should be most accurate
+                local_path = repo_data.get("local_path", "")
+                if local_path:
+                    try:
+                        # Convert relative path to absolute
+                        if not Path(local_path).is_absolute():
+                            abs_local_path = self.config_dir / local_path
+                        else:
+                            abs_local_path = Path(local_path)
+                            
+                        if abs_local_path.exists():
+                            install_date = self._get_installation_date(abs_local_path)
+                            theme_file_path = str(abs_local_path.relative_to(self.config_dir))
+                    except Exception as ex:
+                        _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
                 
-                # If no installation date yet, try the HACS local path as fallback
+                # If local_path is empty or doesn't exist, try to find theme by repository name
                 if install_date is None:
-                    local_path = repo_data.get("local_path", "")
-                    if local_path:
-                        theme_file_path = local_path
-                        try:
-                            if not Path(local_path).is_absolute():
-                                # If it's relative, make it relative to config directory
-                                local_path = str(self.config_dir / local_path)
-                            install_date = self._get_installation_date(local_path)
-                        except Exception as ex:
-                            _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
+                    theme_dir = self.config_dir / "themes"
+                    if theme_dir.exists():
+                        # Extract theme name from repository name (e.g., "loryanstrant/blackout" -> "blackout")
+                        repo_theme_name = full_name.split("/")[-1] if "/" in full_name else ""
+                        
+                        # Try multiple patterns for theme directory/file names
+                        theme_patterns = [
+                            repo_theme_name,  # Repository name
+                            display_name,  # Display name
+                            display_name.lower() if display_name else "",  # Lowercase version
+                        ]
+                        
+                        # Remove empty patterns and duplicates
+                        theme_patterns = list(set([p for p in theme_patterns if p]))
+                        
+                        for pattern in theme_patterns:
+                            # Try as directory first
+                            theme_directory = theme_dir / pattern
+                            if theme_directory.exists() and theme_directory.is_dir():
+                                install_date = self._get_installation_date(theme_directory)
+                                theme_file_path = str(theme_directory.relative_to(self.config_dir))
+                                break
+                            
+                            # Try with .yaml extension as a file
+                            theme_file = theme_dir / f"{pattern}.yaml"
+                            if theme_file.exists():
+                                install_date = self._get_installation_date(theme_file)
+                                theme_file_path = str(theme_file.relative_to(self.config_dir))
+                                break
                 
                 installed_themes.append({
                     "name": display_name,
@@ -481,12 +820,102 @@ class ComponentScanner:
                     "version": repo_data.get("version_installed", "unknown"),
                 })
 
-        # Check theme usage from storage files
+        # Also check for non-HACS themes in the themes directory
+        theme_dir = self.config_dir / "themes"
+        if theme_dir.exists():
+            # Get comprehensive lists for deduplication
+            hacs_theme_names = set()
+            hacs_theme_paths = set()
+            hacs_directories = set()
+            hacs_repo_names = set()
+            
+            for theme in installed_themes:
+                # Add the display name and variations
+                theme_name = theme["name"]
+                if theme_name:
+                    hacs_theme_names.add(theme_name.lower())
+                
+                # Add path variations
+                if theme["file"]:
+                    hacs_theme_paths.add(theme["file"])
+                    # Extract directory name from path
+                    path_parts = Path(theme["file"]).parts
+                    if len(path_parts) > 1 and path_parts[0] == "themes":
+                        hacs_directories.add(path_parts[1].lower())
+                
+                # Add repository name variations
+                if theme["hacs_repository"]:
+                    full_repo_name = theme["hacs_repository"]
+                    repo_name = full_repo_name.split("/")[-1].lower()
+                    hacs_repo_names.add(repo_name)
+                    hacs_directories.add(repo_name)
+                    
+                    # Also add the full repository name parts
+                    if "/" in full_repo_name:
+                        repo_parts = full_repo_name.lower().split("/")
+                        hacs_repo_names.update(repo_parts)
+            
+            def _scan_themes_directory():
+                found_themes = []
+                for item in theme_dir.iterdir():
+                    if item.is_dir():
+                        # Check if this directory contains theme files
+                        yaml_files = list(item.glob("*.yaml")) + list(item.glob("*.yml"))
+                        if yaml_files:
+                            rel_path = str(item.relative_to(self.config_dir))
+                            dir_name_lower = item.name.lower()
+                            
+                            # Check if this directory is already covered by HACS themes
+                            if (rel_path not in hacs_theme_paths and 
+                                dir_name_lower not in hacs_directories and
+                                dir_name_lower not in hacs_theme_names and
+                                dir_name_lower not in hacs_repo_names):
+                                found_themes.append({
+                                    "name": item.name,
+                                    "path": rel_path,
+                                    "type": "directory",
+                                    "install_date": self._get_installation_date(item)
+                                })
+                    elif item.suffix in ['.yaml', '.yml']:
+                        # Direct theme file
+                        theme_name = item.stem
+                        rel_path = str(item.relative_to(self.config_dir))
+                        theme_name_lower = theme_name.lower()
+                        
+                        # Check if this file is already covered by HACS themes
+                        if (rel_path not in hacs_theme_paths and 
+                            theme_name_lower not in hacs_theme_names and
+                            theme_name_lower not in hacs_repo_names):
+                            found_themes.append({
+                                "name": theme_name,
+                                "path": rel_path,
+                                "type": "file",
+                                "install_date": self._get_installation_date(item)
+                            })
+                return found_themes
+            
+            non_hacs_themes = await self.hass.async_add_executor_job(_scan_themes_directory)
+            
+            # Add non-HACS themes to the list
+            for theme_info in non_hacs_themes:
+                installed_themes.append({
+                    "name": theme_info["name"],
+                    "file": theme_info["path"],
+                    "full_path": theme_info["path"],
+                    "repository": "",
+                    "documentation": "",
+                    "installed_date": theme_info["install_date"],
+                    "hacs_repository": "",
+                    "hacs_status": "manual",
+                    "version": "unknown",
+                })
+
+        # Check theme usage
         used_themes = []
         unused_themes = []
         
         for theme in installed_themes:
-            is_used = await self._is_theme_used(theme, None, set())
+            is_used = await self._is_theme_used(theme)
             
             if is_used:
                 used_themes.append(theme)
@@ -514,9 +943,6 @@ class ComponentScanner:
             if (repo_data.get("category") == "plugin" and 
                 repo_data.get("installed", False)):
                 
-                # Initialize variables to avoid UnboundLocalError
-                local_path = ""
-                
                 # Extract repository information
                 full_name = repo_data.get("full_name", "")
                 repo_url = f"https://github.com/{full_name}" if full_name else ""
@@ -538,43 +964,56 @@ class ComponentScanner:
                 if not display_name and full_name:
                     display_name = full_name.split("/")[-1] if "/" in full_name else full_name
                 
-                # Get installation date by looking at the www/community directory first
-                # This ensures we get the actual installation date, not the last file modification date
+                # Get installation date - try multiple approaches
                 install_date = None
                 resource_path = ""
                 
-                # Try to find frontend resource directory in www/community/ folder first
-                community_dir = self.config_dir / "www" / "community"
-                if community_dir.exists():
-                    # Try display_name as directory
-                    resource_directory = community_dir / display_name
-                    if resource_directory.exists() and resource_directory.is_dir():
-                        install_date = self._get_installation_date(resource_directory)
-                        resource_path = str(resource_directory.relative_to(self.config_dir))
-                
-                # If no installation date yet, try the HACS local path as fallback
-                if install_date is None:
-                    local_path = repo_data.get("local_path", "")
-                    if local_path:
-                        try:
-                            # Convert to relative path from config directory if possible
-                            if Path(local_path).is_absolute():
-                                try:
-                                    resource_path = str(Path(local_path).relative_to(self.config_dir))
-                                except ValueError:
-                                    # If path is not relative to config dir, use as-is
-                                    resource_path = local_path
-                            else:
+                # First, try the HACS local path which should be most accurate
+                local_path = repo_data.get("local_path", "")
+                if local_path:
+                    try:
+                        # Convert relative path to absolute
+                        if not Path(local_path).is_absolute():
+                            abs_local_path = self.config_dir / local_path
+                        else:
+                            abs_local_path = Path(local_path)
+                            
+                        if abs_local_path.exists():
+                            install_date = self._get_installation_date(abs_local_path)
+                            try:
+                                resource_path = str(abs_local_path.relative_to(self.config_dir))
+                            except ValueError:
                                 resource_path = local_path
-                                
-                            install_date = self._get_installation_date(local_path)
-                        except Exception as ex:
-                            _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
-                            # Fallback: use the path as-is
-                            resource_path = local_path
+                    except Exception as ex:
+                        _LOGGER.debug("Could not get installation date from HACS local_path %s: %s", local_path, ex)
+                
+                # If local_path is empty or doesn't exist, try to find resource by repository name
+                if install_date is None:
+                    community_dir = self.config_dir / "www" / "community"
+                    if community_dir.exists():
+                        # Extract resource name from repository name (e.g., "custom-cards/button-card" -> "button-card")
+                        repo_resource_name = full_name.split("/")[-1] if "/" in full_name else ""
+                        
+                        # Try multiple patterns for resource directory names
+                        resource_patterns = [
+                            repo_resource_name,  # Repository name
+                            display_name,  # Display name
+                            display_name.lower() if display_name else "",  # Lowercase version
+                        ]
+                        
+                        # Remove empty patterns and duplicates
+                        resource_patterns = list(set([p for p in resource_patterns if p]))
+                        
+                        for pattern in resource_patterns:
+                            # Try as directory
+                            resource_directory = community_dir / pattern
+                            if resource_directory.exists() and resource_directory.is_dir():
+                                install_date = self._get_installation_date(resource_directory)
+                                resource_path = str(resource_directory.relative_to(self.config_dir))
+                                break
                 
                 # Final fallback: try www/ directory with display_name
-                if install_date is None:
+                if install_date is None and display_name:
                     fallback_path = self.config_dir / "www" / display_name
                     if fallback_path.exists():
                         install_date = self._get_installation_date(fallback_path)
@@ -594,20 +1033,15 @@ class ComponentScanner:
                     "version": repo_data.get("version_installed", "unknown"),
                 })
 
-        # Check for usage in Lovelace configuration from storage files
+        # Check for usage in Lovelace configuration
         used_frontend = []
         unused_frontend = []
         
         # Check each frontend resource
         for resource in installed_frontend:
-            resource_path = resource["path"]
-            if resource_path.startswith("www/"):
-                local_path = resource_path[4:]  # Remove "www/" prefix
-            else:
-                local_path = resource_path
-                
-            # Check if resource is used in lovelace storage files
-            is_used = await self._is_frontend_resource_used(resource, local_path)
+            # For HACS resources, we need to check in www/community/
+            # The resource_path from HACS might not be accurate for the actual file location
+            is_used = await self._is_frontend_resource_used(resource, "")
             
             if is_used:
                 used_frontend.append(resource)
@@ -620,6 +1054,116 @@ class ComponentScanner:
             "unused": unused_frontend,
         }
 
+    async def _is_theme_used(self, theme: dict[str, Any]) -> bool:
+        """Check if a theme is used in Home Assistant configuration."""
+        theme_name = theme.get("name", "")
+        if not theme_name:
+            return False
+        
+        # Get actual theme names from the theme file
+        theme_file_path = theme.get("file", "")
+        full_path = theme.get("full_path", "")
+        
+        actual_theme_names = []
+        
+        # Try to get theme names from the actual theme file
+        if theme_file_path:
+            file_path = self.config_dir / theme_file_path
+            actual_theme_names = await self._get_theme_names_from_file(file_path)
+        elif full_path:
+            if not Path(full_path).is_absolute():
+                file_path = self.config_dir / full_path
+            else:
+                file_path = Path(full_path)
+            actual_theme_names = await self._get_theme_names_from_file(file_path)
+        
+        # If we couldn't extract theme names, fall back to the theme name
+        if not actual_theme_names:
+            actual_theme_names = [theme_name]
+        
+        # Check each actual theme name
+        for actual_theme_name in actual_theme_names:
+            if await self._check_theme_usage(actual_theme_name):
+                return True
+                
+        return False
+
+    async def _is_frontend_resource_used(self, resource: dict[str, Any], local_path: str) -> bool:
+        """Check if frontend resource is used in Lovelace configuration."""
+        resource_name = resource.get("name", "")
+        resource_path = resource.get("path", "")
+        full_path = resource.get("full_path", "")
+        
+        if not resource_name:
+            return False
+        
+        # First check if the resource is even registered in lovelace_resources
+        # If it's not registered, it can't be used
+        is_registered = await self._is_frontend_resource_registered(resource_name, resource_path)
+        if not is_registered:
+            _LOGGER.debug("Resource %s is not registered in lovelace_resources", resource_name)
+            return False
+        
+        # Get the actual custom element types from the resource files
+        # HACS stores files in www/community/ but serves them via /hacsfiles/
+        actual_resource_path = None
+        
+        # Try to find the actual files in www/community/
+        if resource_path and resource_path.startswith("www/community/"):
+            actual_resource_path = self.config_dir / resource_path
+        elif resource_name:
+            # For HACS resources, try the standard www/community/{resource_name} pattern
+            community_path = self.config_dir / "www" / "community" / resource_name
+            if community_path.exists():
+                actual_resource_path = community_path
+            else:
+                # Try with some common name variations
+                name_variations = [
+                    resource_name.lower(),
+                    resource_name.replace('_', '-'),
+                    resource_name.replace('-', '_'),
+                ]
+                for variation in name_variations:
+                    community_path = self.config_dir / "www" / "community" / variation
+                    if community_path.exists():
+                        actual_resource_path = community_path
+                        break
+        
+        custom_types = []
+        if actual_resource_path and actual_resource_path.exists():
+            custom_types = await self._get_frontend_resource_types(actual_resource_path, resource_name)
+        
+        # If we couldn't extract types, create fallback patterns based on common naming conventions
+        if not custom_types:
+            _LOGGER.debug("Could not extract custom types from %s, using fallback patterns", resource_name)
+            # Common naming patterns for custom cards
+            fallback_patterns = [
+                resource_name.lower(),
+                resource_name.lower().replace('_', '-'),
+                resource_name.lower().replace('-', '_'),
+            ]
+            
+            # Add common suffixes if not present
+            for pattern in fallback_patterns.copy():
+                if not pattern.endswith('-card'):
+                    fallback_patterns.append(f"{pattern}-card")
+                if not pattern.endswith('_card'):
+                    fallback_patterns.append(f"{pattern}_card")
+            
+            # Add custom: prefix to all patterns
+            custom_types = [f"custom:{pattern}" for pattern in fallback_patterns]
+            custom_types.extend(fallback_patterns)  # Also check without prefix
+        
+        _LOGGER.debug("Checking usage for custom types: %s", custom_types)
+        
+        # Check if any of the custom types are used in Lovelace
+        for custom_type in custom_types:
+            if await self._check_frontend_resource_usage(custom_type, resource_name):
+                _LOGGER.debug("Found usage of custom type %s for resource %s", custom_type, resource_name)
+                return True
+        
+        _LOGGER.debug("No usage found for resource %s", resource_name)
+        return False
 
 class CustomComponentMonitorCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the API."""
@@ -648,8 +1192,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator):
                          themes["total"], len(themes["unused"]))
             
             frontend = await self.scanner.scan_custom_frontend()
-            _LOGGER.debug("Found %d frontend resources (%d unused)", 
-                         frontend["total"], len(frontend["unused"]))
+            _LOGGER.debug("Found %d frontend resources (%d unused, %d used)", 
+                         frontend["total"], len(frontend["unused"]), len(frontend["used"]))
             
             return {
                 "integrations": integrations,
@@ -762,6 +1306,10 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
 
         # Filter unused components to include only essential fields to reduce attribute size
         unused_components = data.get("unused", [])
+        # Ensure unused_components is always a list, never None
+        if unused_components is None:
+            unused_components = []
+            
         filtered_unused = [self._filter_component_for_attributes(component) 
                           for component in unused_components]
 
