@@ -75,7 +75,15 @@ You can find the code for the below example in the [example-dashboard.yaml](http
 
 <img width="1374" height="944" alt="image" src="https://github.com/user-attachments/assets/944232c0-9fac-4c28-a2a9-6aa101617786" />
 
+## Current Known Issue(s) / Tasks
 
+- [ ] Some integrations show us unused when they are used (e.g. helpers)
+- [ ] Some themes are showing as unused when they are used
+- [ ] Themes that were not installed via HACS will not show a repo link
+- [ ] Some themes may twice: once as a reference and once using their HACS details (due to inability to match)
+- [ ] Some frontend components show as unused when they are used (either they provide icons, or there hasn't been a proper match found)
+
+Look, fundamentally it does a decent job ok? It's better than just *not* knowing what isn't used at all, isn't it???
 
 
 ## Contributing
