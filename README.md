@@ -4,7 +4,8 @@
 [![GitHub release](https://img.shields.io/github/release/loryanstrant/HA-CustomComponentMonitor.svg)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases/)
 
 A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources.
-<p align="center"><img width="256" height="256" alt="HA Custom Component Monitor logo 256x256" src="https://github.com/user-attachments/assets/075d02f4-6079-4042-87ae-a3d218e0d474" /></p>
+<p align="center"><img width="256" height="256" alt="icon" src="https://github.com/user-attachments/assets/3ae6431f-b649-47df-bc9c-181e3c4fb63f" /></p>
+
 
 ## Overview
 
