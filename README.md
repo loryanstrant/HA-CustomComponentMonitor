@@ -25,7 +25,6 @@ This integration creates sensors that list all HACS-installed custom components 
 ## Installation
 
 ### HACS (Recommended)
-(Waiting to add this to HACS default repository as of 12th Sept 2025, for now use the below method...)
 
 1. Open HACS in your Home Assistant instance
 2. Go to "Integrations"
@@ -80,7 +79,7 @@ You can find the code for the below example in the [example-dashboard.yaml](http
 - [ ] Some integrations show us unused when they are used (e.g. helpers)
 - [ ] Some themes are showing as unused when they are used
 - [ ] Themes that were not installed via HACS will not show a repo link
-- [ ] Some themes may twice: once as a reference and once using their HACS details (due to inability to match)
+- [ ] Some themes may twice: once as a reference and once using their HACS details (due to a flaw in matching logic)
 - [ ] Some frontend components show as unused when they are used (either they provide icons, or there hasn't been a proper match found)
 
 Look, fundamentally it does a decent job ok? It's better than just *not* knowing what isn't used at all, isn't it???
