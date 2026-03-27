@@ -16,7 +16,8 @@ This integration creates sensors that list all HACS-installed custom components 
 ## Screenshot
 
 <!-- Replace the image below with a screenshot from your own HA instance -->
-> **TODO**: Add screenshot of the Custom Component Monitor card from your HA dashboard.
+<img width="705" height="1137" alt="image" src="https://github.com/user-attachments/assets/ea6b1532-c8ef-464e-827d-7d4767688ad4" />
+
 
 ## Features
 
