@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Custom Component Monitor",
-        "description": "Set up Custom Component Monitor to track unused components in your Home Assistant installation."
+        "description": "Set up Custom Component Monitor to track HACS-installed components in your Home Assistant installation."
       }
     },
     "error": {
@@ -11,6 +11,22 @@
     },
     "abort": {
       "single_instance_allowed": "Only a single configuration is allowed."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "all_hacs_components": {
+        "name": "HACS Installed Components"
+      },
+      "unused_integrations": {
+        "name": "Unused Custom Integrations"
+      },
+      "unused_themes": {
+        "name": "Unused Custom Themes"
+      },
+      "unused_frontend": {
+        "name": "Unused Frontend Resources"
+      }
     }
   }
 }

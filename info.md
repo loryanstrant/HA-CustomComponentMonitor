@@ -1,63 +1,37 @@
 # Custom Component Monitor
 
-This integration monitors your HACS installation for custom components and identifies which ones are not being used.
+Monitor your HACS installation for unused custom components — with a built-in Lovelace dashboard card.
 
 ## Features
 
-- **HACS Integration Monitoring**: Scans your HACS repositories and identifies which integrations are installed but not configured
-- **HACS Theme Monitoring**: Checks your HACS themes and identifies unused ones with repository links
-- **HACS Frontend Resource Monitoring**: Scans your HACS frontend plugins with repository links
-- **Installation Date Tracking**: Shows when each component was first installed
+- **4 Sensors**: Tracks all HACS-installed components, unused integrations, unused themes, and unused frontend resources
+- **Dashboard Card**: Built-in Lovelace card with collapsible sections, sort toggle, and section filtering
+- **Smart Detection**: Checks config entries, Lovelace dashboards, and theme settings to determine actual usage
+- **Repository Links**: Direct links to each component's repository
+- **Installation Tracking**: Shows how long each component has been installed
 
 ## Sensors
 
-The integration creates three sensors:
+| Sensor | Description |
+|--------|-------------|
+| `sensor.hacs_installed_components` | Total count of all HACS-installed components |
+| `sensor.unused_custom_integrations` | Unused custom integrations |
+| `sensor.unused_custom_themes` | Unused custom themes |
+| `sensor.unused_frontend_resources` | Unused frontend cards/plugins |
 
-1. **Unused Custom Integrations** (`sensor.unused_custom_integrations`)
-   - Shows the count of unused HACS integrations
-   - Attributes include detailed information about each unused integration with repository links and installation dates
+## Dashboard Card
 
-2. **Unused Custom Themes** (`sensor.unused_custom_themes`)
-   - Shows the count of unused HACS themes
-   - Attributes include list of unused theme files with repository links and installation dates
+After installation, add the card to any dashboard:
 
-3. **Unused Frontend Resources** (`sensor.unused_frontend_resources`)
-   - Shows the count of unused HACS frontend resources
-   - Attributes include list of potentially unused files and directories with repository links and installation dates
+```yaml
+type: custom:custom-component-monitor-card
+```
 
-## Installation
-
-### HACS (Recommended)
-
-1. Open HACS in Home Assistant
-2. Go to "Integrations" 
-3. Click the "+" button
-4. Search for "Custom Component Monitor"
-5. Install the integration
-6. Restart Home Assistant
-7. Go to Settings > Integrations
-8. Click "Add Integration" and search for "Custom Component Monitor"
-9. Follow the setup process
-
-### Manual Installation
-
-1. Copy the `custom_components/custom_component_monitor` directory to your Home Assistant `custom_components` directory
-2. Restart Home Assistant
-3. Go to Settings > Integrations
-4. Click "Add Integration" and search for "Custom Component Monitor"
-5. Follow the setup process
+The card is automatically registered as a Lovelace resource — no manual setup required.
 
 ## Configuration
 
-No configuration is required. The integration will automatically scan your installation every hour for changes.
-
-## Usage
-
-After installation, you can:
-
-- View the sensor states in the Home Assistant dashboard
-- Create automations based on the sensor values
-- Use the detailed attribute data to identify specific unused components
+No configuration is required beyond adding the integration. Scans run hourly.
 - Access repository links for unused integrations, themes, and frontend resources to easily remove them
 - Track when components were installed to help with maintenance decisions
 
