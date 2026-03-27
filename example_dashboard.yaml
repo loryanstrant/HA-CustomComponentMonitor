@@ -1,62 +1,24 @@
-# Example configuration for Home Assistant dashboard
+# Example dashboard configurations for Custom Component Monitor
+# See README.md for full documentation
 
-# Add to your Lovelace dashboard to display unused components
-type: horizontal-stack
-cards:
-  - type: vertical-stack
-    cards:
-      - type: markdown
-        content: "## 🧩 Unused Custom Integrations"
-      - type: conditional
-        conditions:
-          - entity: sensor.unused_custom_integrations
-            state_not: "0"
-        card:
-          type: markdown
-          content: >
-            {% for item in state_attr('sensor.unused_custom_integrations',
-            'unused_components') | sort(attribute='name') %} **{{ item.name }}**
-            <br> {% if item.repository %}[Repo]({{ item.repository }}){% endif
-            %} {% if item.version != 'unknown' %} · {{ item.version }}{% endif
-            %} {% if item.installed_date %} · Installed {{ (now() -
-            (item.installed_date | as_datetime | as_local)).days }}d ago{% endif
-            %} <br><br> {% endfor %}
-  - type: vertical-stack
-    cards:
-      - type: markdown
-        content: "## 🎨 Unused Custom Themes"
-      - type: conditional
-        conditions:
-          - entity: sensor.unused_custom_themes
-            state_not: "0"
-        card:
-          type: markdown
-          content: >
-            {% for item in state_attr('sensor.unused_custom_themes',
-            'unused_components') | sort(attribute='name') %} **{{ item.name
-            }}**<br> {% if item.repository %}[Repo]({{ item.repository }}){%
-            endif %} {% if item.version != 'unknown' %} · {{ item.version }}{%
-            endif %} {% if item.installed_date %} · Installed {{ (now() -
-            (item.installed_date | as_datetime | as_local)).days }}d ago{% endif
-            %} <br><br> {% endfor %}
-  - type: vertical-stack
-    cards:
-      - type: markdown
-        content: "## 🌐 Unused Frontend Resources"
-      - type: conditional
-        conditions:
-          - entity: sensor.unused_frontend_resources
-            state_not: "0"
-        card:
-          type: markdown
-          content: >
-            {% for item in state_attr('sensor.unused_frontend_resources',
-            'unused_components') | sort(attribute='name') %} **{{ item.name }}**
-            <small></small><br> {% if item.repository %}[Repo]({{
-            item.repository }}){% endif %} {% if item.version != 'unknown' %} ·
-            {{ item.version }}{% endif %} {% if item.installed_date %} ·
-            Installed {{ (now() - (item.installed_date | as_datetime |
-            as_local)).days }}d ago{% endif %} <br><br> {% endfor %}
-grid_options:
-  columns: 36
-  rows: auto
+# --- Default: show all sections ---
+type: custom:custom-component-monitor-card
+
+# --- Custom title and sort by days installed ---
+# type: custom:custom-component-monitor-card
+# title: Unused Components
+# sort: days
+
+# --- Only unused integrations ---
+# type: custom:custom-component-monitor-card
+# title: Unused Integrations
+# sections:
+#   - integrations
+
+# --- Themes and frontend only ---
+# type: custom:custom-component-monitor-card
+# title: Themes & Cards
+# sort: days
+# sections:
+#   - themes
+#   - frontend
