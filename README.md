@@ -46,6 +46,7 @@ This integration creates sensors that list all HACS-installed custom components 
 9. Go to Configuration → Integrations
 10. Click "+ Add Integration" and search for "Custom Component Monitor"
 11. Press Submit to complete the installation
+12. Restart Home Assistant again (for the card to show up)
 
 Or replace steps 1–6 with this:
 
