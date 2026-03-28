@@ -3,7 +3,7 @@
   "name": "Custom Component Monitor",
   "codeowners": ["@loryanstrant"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [lovelace],
   "documentation": "https://github.com/loryanstrant/HA-CustomComponentMonitor",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/loryanstrant/HA-CustomComponentMonitor/issues",
