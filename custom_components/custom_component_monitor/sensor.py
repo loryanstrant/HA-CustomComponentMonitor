@@ -126,9 +126,19 @@ class ComponentScanner:
             candidates = [repo_short]
             if repo.get("name"):
                 candidates.append(repo["name"])
-            # Strip common prefixes like "ha-"
-            if repo_short.startswith("ha-"):
-                candidates.append(repo_short[3:])
+            rm_name = rm.get("name", "")
+            if rm_name:
+                candidates.append(rm_name)
+            # Strip common repo name prefixes
+            for prefix in ("ha-", "homeassistant-", "home-assistant-", "lovelace-"):
+                if repo_short.lower().startswith(prefix):
+                    candidates.append(repo_short[len(prefix):])
+            # Also strip trailing "-theme" / "-themes" suffix
+            for cand in list(candidates):
+                low = cand.lower()
+                for suffix in ("-theme", "-themes"):
+                    if low.endswith(suffix):
+                        candidates.append(cand[:len(cand) - len(suffix)])
             # Try the YAML filename (without extension) from manifest
             rm_filename = rm.get("filename", "")
             if rm_filename:
@@ -141,13 +151,16 @@ class ComponentScanner:
                 candidate = themes_dir / name
                 if candidate.exists():
                     return candidate
-            # Last resort: scan themes dir for dirs containing repo_short
+            # Broader match: check if dir name appears in a candidate or vice versa
             if themes_dir.exists():
                 for child in themes_dir.iterdir():
                     if child.is_dir():
-                        low = child.name.lower()
+                        dir_low = child.name.lower()
                         for name in candidates:
-                            if name and name.lower() in low:
+                            if not name:
+                                continue
+                            name_low = name.lower()
+                            if name_low in dir_low or dir_low in name_low:
                                 return child
         elif category == "plugin":
             candidates = [repo_short]
@@ -394,6 +407,10 @@ class ComponentScanner:
 
         Returns lowercased card type names (without the ``custom:`` prefix).
         E.g. ``["weather-forecast-card"]``.
+
+        Uses multiple strategies to handle cases where the JS filename
+        doesn't match the registered custom element name (e.g. Firemote,
+        Mushroom).
         """
         rm = repo.get("repository_manifest", {}) or {}
         full_name = repo.get("full_name", "")
@@ -406,9 +423,12 @@ class ComponentScanner:
         if manifest_fn and manifest_fn.endswith(".js"):
             names.append(manifest_fn[:-3].lower())
 
-        # 2) Scan the community directory for .js files
+        # 2) Scan the community directory for .js files and extract
+        #    customElements.define calls from them
         candidates = [repo_short]
         if repo_short.startswith("ha-"):
+            candidates.append(repo_short[3:])
+        if repo_short.startswith("HA-"):
             candidates.append(repo_short[3:])
         community_dir = self.config_dir / "www" / "community"
         for cname in candidates:
@@ -418,6 +438,11 @@ class ComponentScanner:
                     stem = js_file.stem.lower()
                     if stem not in names and not stem.endswith(".gz"):
                         names.append(stem)
+                    # Extract actual registered custom element names from JS
+                    ce_names = self._extract_custom_elements(js_file)
+                    for ce in ce_names:
+                        if ce not in names:
+                            names.append(ce)
 
         # 3) Fall back to repo short name if nothing found
         if not names:
@@ -428,6 +453,37 @@ class ComponentScanner:
             names.append(stripped)
 
         return names
+
+    _CE_DEFINE_RE = re.compile(
+        r'customElements\.define\(\s*["\']([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)["\']',
+        re.IGNORECASE,
+    )
+
+    def _extract_custom_elements(self, js_path: Path) -> list[str]:
+        """Extract custom element names from customElements.define() calls.
+
+        Reads up to 1MB of the JS file and returns all unique element names
+        that look like card types (contain a hyphen, as required by the
+        custom elements spec). Filters out editor elements.
+        """
+        try:
+            # Read a bounded amount to avoid huge memory use on large bundles
+            raw = js_path.read_bytes()[:1_048_576].decode("utf-8", errors="ignore")
+        except OSError:
+            return []
+
+        found: list[str] = []
+        for match in self._CE_DEFINE_RE.finditer(raw):
+            name = match.group(1).lower()
+            # Must contain a hyphen (custom elements spec requirement)
+            if "-" not in name:
+                continue
+            # Skip editor elements — they aren't card types
+            if name.endswith("-editor"):
+                continue
+            if name not in found:
+                found.append(name)
+        return found
 
     async def _collect_used_card_types(self) -> set[str]:
         """Return the set of custom card type names found in lovelace dashboards.
@@ -542,6 +598,17 @@ class ComponentScanner:
                     if ct in used_types:
                         is_used = True
                         break
+                # Prefix-based matching for multi-card libraries (e.g. Mushroom)
+                # If a derived name like "mushroom" matches any used card type
+                # starting with "mushroom-", count it as used.
+                if not is_used:
+                    for ct in card_types:
+                        for ut in used_types:
+                            if ut.startswith(ct + "-"):
+                                is_used = True
+                                break
+                        if is_used:
+                            break
 
             entry = {
                 "name": name,
@@ -819,6 +886,10 @@ async def async_setup_entry(
         raise ConfigEntryNotReady(
             f"Failed to initialize coordinator: {exc}"
         ) from exc
+
+    # Store coordinator reference so the scan_now service can access it
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN]["coordinator"] = coordinator
 
     entities = [
         CustomComponentMonitorSensor(coordinator, desc)
