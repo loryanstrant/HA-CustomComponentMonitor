@@ -444,7 +444,18 @@ class ComponentScanner:
                         if ce not in names:
                             names.append(ce)
 
-        # 3) Fall back to repo short name if nothing found
+        # 3) Add prefix-stripped variants for every name collected so far
+        #    (e.g. "lovelace-horizon-card" → "horizon-card")
+        stripped_extras: list[str] = []
+        for n in names:
+            for prefix in ("lovelace-", "ha-"):
+                if n.startswith(prefix):
+                    stripped = n[len(prefix):]
+                    if stripped and stripped not in names and stripped not in stripped_extras:
+                        stripped_extras.append(stripped)
+        names.extend(stripped_extras)
+
+        # 4) Fall back to repo short name if nothing found
         if not names:
             stripped = repo_short.lower()
             for prefix in ("lovelace-", "ha-"):
