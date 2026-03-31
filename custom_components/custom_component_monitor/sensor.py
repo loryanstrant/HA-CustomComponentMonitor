@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,55 @@ class ComponentScanner:
         except (json.JSONDecodeError, OSError) as exc:
             _LOGGER.debug("Could not load storage file %s: %s", filename, exc)
             return {}
+
+    @staticmethod
+    def _make_ha_yaml_loader() -> type:
+        """Return a YAML SafeLoader subclass that handles HA custom tags."""
+        loader = type("HALoader", (yaml.SafeLoader,), {})
+        # Handle !include, !include_dir_merge_named, !secret, etc.
+        for tag in ("!include", "!include_dir_merge_named",
+                    "!include_dir_list", "!include_dir_named",
+                    "!secret", "!env_var"):
+            loader.add_constructor(
+                tag, lambda l, n: l.construct_scalar(n)
+            )
+        return loader
+
+    def _list_yaml_dashboard_files(self) -> list[Path]:
+        """Return file paths for YAML-mode Lovelace dashboards.
+
+        Reads ``configuration.yaml`` to find dashboards registered with
+        ``mode: yaml`` and returns their resolved file paths.
+        """
+        config_yaml = self.config_dir / "configuration.yaml"
+        if not config_yaml.exists():
+            return []
+        try:
+            loader = self._make_ha_yaml_loader()
+            with open(config_yaml, encoding="utf-8") as fh:
+                raw = yaml.load(fh, Loader=loader) or {}
+        except (yaml.YAMLError, OSError):
+            return []
+        lovelace = raw.get("lovelace", {}) or {}
+        dashboards = lovelace.get("dashboards", {}) or {}
+        paths: list[Path] = []
+        for dash_cfg in dashboards.values():
+            if not isinstance(dash_cfg, dict):
+                continue
+            if dash_cfg.get("mode") != "yaml":
+                continue
+            filename = dash_cfg.get("filename")
+            if not filename:
+                continue
+            resolved = self.config_dir / filename
+            if resolved.exists():
+                paths.append(resolved)
+        # Also check if the default dashboard is YAML mode
+        if lovelace.get("mode") == "yaml":
+            default = self.config_dir / lovelace.get("filename", "ui-lovelace.yaml")
+            if default.exists():
+                paths.append(default)
+        return paths
 
     async def _load_hacs_repositories(self) -> dict[str, Any]:
         """Return HACS repository dict (cached for the scan cycle)."""
@@ -307,6 +357,23 @@ class ComponentScanner:
             except (json.JSONDecodeError, OSError):
                 continue
             self._extract_theme_refs(raw, used)
+
+        # Also scan YAML-mode dashboards for theme references
+        def _read_yaml(path: Path) -> Any:
+            loader = self._make_ha_yaml_loader()
+            with open(path, encoding="utf-8") as fh:
+                return yaml.load(fh, Loader=loader)
+
+        yaml_dashboards = await self.hass.async_add_executor_job(
+            self._list_yaml_dashboard_files
+        )
+        for yf in yaml_dashboards:
+            try:
+                raw = await self.hass.async_add_executor_job(_read_yaml, yf)
+            except (yaml.YAMLError, OSError):
+                continue
+            if raw:
+                self._extract_theme_refs(raw, used)
 
         _LOGGER.debug("Used theme names (normalised): %s", used)
         return used
@@ -560,6 +627,27 @@ class ComponentScanner:
             return prefixes
 
         used = await self.hass.async_add_executor_job(_scan_storage)
+
+        # Also scan YAML-mode dashboards for icon prefixes
+        yaml_icon_re = re.compile(r'icon:\s*["\']?([a-zA-Z][a-zA-Z0-9_-]*):')
+        def _scan_yaml_dashboards() -> set[str]:
+            prefixes: set[str] = set()
+            for yf in self._list_yaml_dashboard_files():
+                try:
+                    text = yf.read_text(encoding="utf-8", errors="ignore")
+                    for m in yaml_icon_re.finditer(text):
+                        p = m.group(1).lower()
+                        if p not in builtin:
+                            prefixes.add(p)
+                except OSError:
+                    continue
+            return prefixes
+
+        yaml_prefixes = await self.hass.async_add_executor_job(
+            _scan_yaml_dashboards
+        )
+        used |= yaml_prefixes
+
         _LOGGER.debug("Used icon prefixes: %s", used)
         return used
 
@@ -600,6 +688,23 @@ class ComponentScanner:
             except (json.JSONDecodeError, OSError):
                 continue
             self._extract_card_types(raw, used)
+
+        # Also scan YAML-mode dashboards
+        def _read_yaml(path: Path) -> Any:
+            loader = self._make_ha_yaml_loader()
+            with open(path, encoding="utf-8") as fh:
+                return yaml.load(fh, Loader=loader)
+
+        yaml_dashboards = await self.hass.async_add_executor_job(
+            self._list_yaml_dashboard_files
+        )
+        for yf in yaml_dashboards:
+            try:
+                raw = await self.hass.async_add_executor_job(_read_yaml, yf)
+            except (yaml.YAMLError, OSError):
+                continue
+            if raw:
+                self._extract_card_types(raw, used)
 
         _LOGGER.debug("Used card types (custom): %s", used)
         return used
