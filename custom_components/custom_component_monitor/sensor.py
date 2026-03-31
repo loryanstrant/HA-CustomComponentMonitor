@@ -233,8 +233,8 @@ class ComponentScanner:
         """Return the normalised set of theme names actively in use.
 
         Checks:
-        * system-wide default theme (core.config → frontend)
-        * per-user theme (auth → users, frontend.user_data_*)
+        * system-wide default theme (core.config \u2192 frontend)
+        * per-user theme (auth \u2192 users, frontend.user_data_*)
         * all lovelace dashboards (view-level and card-level ``theme`` keys)
         """
         used: set[str] = set()
@@ -278,7 +278,7 @@ class ComponentScanner:
                 if t and isinstance(t, str):
                     used.add(self._normalise_theme_name(t))
 
-        # 3) All lovelace dashboard files — recursive search for "theme" keys
+        # 3) All lovelace dashboard files \u2014 recursive search for "theme" keys
         def _list_lovelace_files() -> list[str]:
             storage = self.config_dir / ".storage"
             if not storage.exists():
@@ -375,7 +375,7 @@ class ComponentScanner:
                         is_used = True
                         break
             else:
-                # No variants extracted — fall back to repo name matching
+                # No variants extracted \u2014 fall back to repo name matching
                 if self._normalise_theme_name(name) in used_names:
                     is_used = True
 
@@ -445,7 +445,7 @@ class ComponentScanner:
                             names.append(ce)
 
         # 3) Add prefix-stripped variants for every name collected so far
-        #    (e.g. "lovelace-horizon-card" → "horizon-card")
+        #    (e.g. "lovelace-horizon-card" \u2192 "horizon-card")
         stripped_extras: list[str] = []
         for n in names:
             for prefix in ("lovelace-", "ha-"):
@@ -489,12 +489,79 @@ class ComponentScanner:
             # Must contain a hyphen (custom elements spec requirement)
             if "-" not in name:
                 continue
-            # Skip editor elements — they aren't card types
+            # Skip editor elements \u2014 they aren't card types
             if name.endswith("-editor"):
                 continue
             if name not in found:
                 found.append(name)
         return found
+
+    # -- icon library helpers ------------------------------------------------
+
+    _ICON_PREFIX_RE = re.compile(
+        r'window\.custom(?:Iconsets|Icons)\s*\[\s*["\']([a-zA-Z][a-zA-Z0-9_-]*)["\']\s*\]',
+    )
+
+    def _extract_icon_prefixes(self, js_path: Path) -> list[str]:
+        """Extract icon set prefixes registered by a JS file.
+
+        Looks for patterns like ``window.customIconsets["phu"]`` and
+        ``window.customIcons["cil"]``.
+        """
+        try:
+            raw = js_path.read_bytes()[:2_097_152].decode("utf-8", errors="ignore")
+        except OSError:
+            return []
+        found: list[str] = []
+        for match in self._ICON_PREFIX_RE.finditer(raw):
+            prefix = match.group(1).lower()
+            if prefix not in found:
+                found.append(prefix)
+        return found
+
+    def _has_custom_element_calls(self, js_path: Path) -> bool:
+        """Return True if the JS file contains any customElements.define() call.
+
+        Unlike ``_extract_custom_elements`` which only matches string-literal
+        element names, this catches minified forms like
+        ``customElements.define(e,n)`` as well.
+        """
+        try:
+            raw = js_path.read_bytes()[:2_097_152].decode("utf-8", errors="ignore")
+        except OSError:
+            return False
+        return "customElements.define(" in raw
+
+    async def _collect_used_icon_prefixes(self) -> set[str]:
+        """Return the set of non-standard icon prefixes used in dashboards and entity registry."""
+        used: set[str] = set()
+        icon_re = re.compile(r'"icon"\s*:\s*"([a-zA-Z][a-zA-Z0-9_-]*):')
+        builtin = {"mdi", "hass", "homeassistant"}
+
+        def _scan_storage() -> set[str]:
+            prefixes: set[str] = set()
+            storage = self.config_dir / ".storage"
+            if not storage.exists():
+                return prefixes
+            # Scan lovelace dashboards and entity registry
+            for fp in storage.iterdir():
+                if not fp.is_file():
+                    continue
+                if not (fp.name.startswith("lovelace") or fp.name == "core.entity_registry"):
+                    continue
+                try:
+                    text = fp.read_text(encoding="utf-8", errors="ignore")
+                    for m in icon_re.finditer(text):
+                        p = m.group(1).lower()
+                        if p not in builtin:
+                            prefixes.add(p)
+                except OSError:
+                    continue
+            return prefixes
+
+        used = await self.hass.async_add_executor_job(_scan_storage)
+        _LOGGER.debug("Used icon prefixes: %s", used)
+        return used
 
     async def _collect_used_card_types(self) -> set[str]:
         """Return the set of custom card type names found in lovelace dashboards.
@@ -559,6 +626,7 @@ class ComponentScanner:
         """
         hacs_repos = await self._load_hacs_repositories()
         used_types = await self._collect_used_card_types()
+        used_icon_prefixes = await self._collect_used_icon_prefixes()
         now = dt_util.now()
 
         used_list: list[dict[str, Any]] = []
@@ -595,15 +663,36 @@ class ComponentScanner:
                 self._derive_card_types, repo
             )
 
-            # card-mod is a utility — it's used if any card has card_mod styling
+            # card-mod is a utility \u2014 it's used if any card has card_mod styling
             repo_short = (
                 full_name.split("/")[-1].lower() if "/" in full_name else ""
             )
             is_card_mod = "card-mod" in repo_short
 
+            # Check if this plugin is an icon library
+            icon_prefixes: list[str] = []
+            community_dir = self.config_dir / "www" / "community"
+            for cname in [repo_short, full_name.split("/")[-1] if "/" in full_name else ""]:
+                if not cname:
+                    continue
+                d = community_dir / cname
+                if d.is_dir():
+                    for js_file in d.glob("*.js"):
+                        icon_prefixes.extend(
+                            await self.hass.async_add_executor_job(
+                                self._extract_icon_prefixes, js_file
+                            )
+                        )
+
             is_used = False
             if is_card_mod:
                 is_used = "__card_mod__" in used_types
+            elif icon_prefixes:
+                # Icon library \u2014 used if any of its prefixes appear in dashboards
+                for pfx in icon_prefixes:
+                    if pfx in used_icon_prefixes:
+                        is_used = True
+                        break
             else:
                 for ct in card_types:
                     if ct in used_types:
@@ -620,6 +709,30 @@ class ComponentScanner:
                                 break
                         if is_used:
                             break
+                # Utility plugins (like kiosk-mode) that don't register
+                # custom elements or icon sets are "used" if they are
+                # registered as a lovelace resource.
+                if not is_used and not card_types:
+                    is_used = False  # no card types derived at all
+                elif not is_used:
+                    # Check if this is a utility (no custom element
+                    # definitions found in JS \u2014 only derived from filename)
+                    has_ce = False
+                    for cname in [repo_short, full_name.split("/")[-1] if "/" in full_name else ""]:
+                        if not cname:
+                            continue
+                        d = community_dir / cname
+                        if d.is_dir():
+                            for js_file in d.glob("*.js"):
+                                if self._has_custom_element_calls(js_file):
+                                    has_ce = True
+                                    break
+                        if has_ce:
+                            break
+                    if not has_ce:
+                        # No custom elements found \u2014 it's a utility plugin.
+                        # Mark as used (it's loaded as a resource for a reason).
+                        is_used = True
 
             entry = {
                 "name": name,
@@ -647,7 +760,13 @@ class ComponentScanner:
     # -- integration helpers --------------------------------------------------
 
     async def _get_configured_domains(self) -> set[str]:
-        """Return the set of integration domains that have config entries."""
+        """Return the set of integration domains that are in use.
+
+        Combines:
+        * ``core.config_entries`` \u2014 UI-configured integrations.
+        * ``hass.config.components`` \u2014 all loaded components at runtime,
+          which includes YAML-configured integrations.
+        """
         data = await self._load_storage_file("core.config_entries")
         domains: set[str] = set()
         for entry in data.get("entries", []):
@@ -655,13 +774,19 @@ class ComponentScanner:
                 d = entry.get("domain")
                 if d:
                     domains.add(d)
+        # Also include runtime-loaded components (covers YAML-configured
+        # integrations that don't use config entries).
+        for component in self.hass.config.components:
+            # Strip sub-platforms like "bureau_of_meteorology.sensor"
+            domain = component.split(".", 1)[0]
+            domains.add(domain)
         return domains
 
     async def scan_integrations(self) -> dict[str, Any]:
         """Scan HACS-installed integrations and determine usage.
 
         An integration is considered *used* if its domain appears in
-        ``core.config_entries``.
+        ``core.config_entries`` or ``hass.config.components``.
 
         Returns ``{"total": int, "used": [...], "unused": [...]}``.
         """
