@@ -22,6 +22,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTR_COMPONENTS,
     ATTR_TOTAL_COMPONENTS,
     ATTR_UNUSED_COMPONENTS,
     ATTR_USED_COMPONENTS,
@@ -1181,7 +1182,12 @@ async def async_setup_entry(
 
 class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     """A Custom Component Monitor sensor."""
+# Exclude the full component list from the Recorder (it can exceed the
+    # 16 384-byte attribute limit) while keeping it available on the live
+    # entity state so cards and templates can still access it.
+    _unrecorded_attributes = frozenset({ATTR_COMPONENTS})
 
+    
     def __init__(
         self,
         coordinator: CustomComponentMonitorCoordinator,
@@ -1224,14 +1230,7 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
         if key == SENSOR_ALL_COMPONENTS:
             components = self.coordinator.data.get("all_components", [])
             attrs[ATTR_TOTAL_COMPONENTS] = len(components)
-            # Store only a per-category summary rather than the full component
-            # list, which can exceed Home Assistant's 16 384-byte attribute
-            # size limit for users with many HACS components installed.
-            by_category: dict[str, int] = {}
-            for comp in components:
-                cat = comp.get("type", "Unknown")
-                by_category[cat] = by_category.get(cat, 0) + 1
-            attrs["by_category"] = by_category
+            attrs[ATTR_COMPONENTS] = components
 
         elif key in (
             SENSOR_UNUSED_INTEGRATIONS,
