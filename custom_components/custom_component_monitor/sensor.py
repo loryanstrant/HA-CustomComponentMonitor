@@ -1182,12 +1182,12 @@ async def async_setup_entry(
 
 class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     """A Custom Component Monitor sensor."""
-# Exclude the full component list from the Recorder (it can exceed the
+
+    # Exclude the full component list from the Recorder (it can exceed the
     # 16 384-byte attribute limit) while keeping it available on the live
     # entity state so cards and templates can still access it.
     _unrecorded_attributes = frozenset({ATTR_COMPONENTS})
 
-    
     def __init__(
         self,
         coordinator: CustomComponentMonitorCoordinator,
