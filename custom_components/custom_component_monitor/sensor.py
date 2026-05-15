@@ -22,7 +22,6 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    ATTR_COMPONENTS,
     ATTR_TOTAL_COMPONENTS,
     ATTR_UNUSED_COMPONENTS,
     ATTR_USED_COMPONENTS,
@@ -283,8 +282,8 @@ class ComponentScanner:
         """Return the normalised set of theme names actively in use.
 
         Checks:
-        * system-wide default theme (core.config \u2192 frontend)
-        * per-user theme (auth \u2192 users, frontend.user_data_*)
+        * system-wide default theme (core.config → frontend)
+        * per-user theme (auth → users, frontend.user_data_*)
         * all lovelace dashboards (view-level and card-level ``theme`` keys)
         """
         used: set[str] = set()
@@ -328,7 +327,7 @@ class ComponentScanner:
                 if t and isinstance(t, str):
                     used.add(self._normalise_theme_name(t))
 
-        # 3) All lovelace dashboard files \u2014 recursive search for "theme" keys
+        # 3) All lovelace dashboard files — recursive search for "theme" keys
         def _list_lovelace_files() -> list[str]:
             storage = self.config_dir / ".storage"
             if not storage.exists():
@@ -442,7 +441,7 @@ class ComponentScanner:
                         is_used = True
                         break
             else:
-                # No variants extracted \u2014 fall back to repo name matching
+                # No variants extracted — fall back to repo name matching
                 if self._normalise_theme_name(name) in used_names:
                     is_used = True
 
@@ -512,7 +511,7 @@ class ComponentScanner:
                             names.append(ce)
 
         # 3) Add prefix-stripped variants for every name collected so far
-        #    (e.g. "lovelace-horizon-card" \u2192 "horizon-card")
+        #    (e.g. "lovelace-horizon-card" → "horizon-card")
         stripped_extras: list[str] = []
         for n in names:
             for prefix in ("lovelace-", "ha-"):
@@ -556,7 +555,7 @@ class ComponentScanner:
             # Must contain a hyphen (custom elements spec requirement)
             if "-" not in name:
                 continue
-            # Skip editor elements \u2014 they aren't card types
+            # Skip editor elements — they aren't card types
             if name.endswith("-editor"):
                 continue
             if name not in found:
@@ -598,6 +597,48 @@ class ComponentScanner:
         except OSError:
             return False
         return "customElements.define(" in raw
+
+    def _scan_dir_for_icon_prefixes(
+        self, community_dir: Path, cnames: list[str]
+    ) -> list[str]:
+        """Return icon-set prefixes from .js files in community subdirectories.
+
+        Consolidates the directory scan and file reads into a single executor
+        call so no blocking I/O runs on the async event loop.
+        """
+        prefixes: list[str] = []
+        seen: set[str] = set()
+        for cname in cnames:
+            if not cname:
+                continue
+            d = community_dir / cname
+            if not d.is_dir():
+                continue
+            for js_file in d.glob("*.js"):
+                for p in self._extract_icon_prefixes(js_file):
+                    if p not in seen:
+                        seen.add(p)
+                        prefixes.append(p)
+        return prefixes
+
+    def _scan_dir_has_custom_elements(
+        self, community_dir: Path, cnames: list[str]
+    ) -> bool:
+        """Return True if any .js file in community subdirs defines custom elements.
+
+        Consolidates the directory scan and file reads into a single executor
+        call so no blocking I/O runs on the async event loop.
+        """
+        for cname in cnames:
+            if not cname:
+                continue
+            d = community_dir / cname
+            if not d.is_dir():
+                continue
+            for js_file in d.glob("*.js"):
+                if self._has_custom_element_calls(js_file):
+                    return True
+        return False
 
     async def _collect_used_icon_prefixes(self) -> set[str]:
         """Return the set of non-standard icon prefixes used in dashboards and entity registry."""
@@ -768,32 +809,34 @@ class ComponentScanner:
                 self._derive_card_types, repo
             )
 
-            # card-mod is a utility \u2014 it's used if any card has card_mod styling
+            # card-mod is a utility — it's used if any card has card_mod styling
             repo_short = (
                 full_name.split("/")[-1].lower() if "/" in full_name else ""
             )
             is_card_mod = "card-mod" in repo_short
 
-            # Check if this plugin is an icon library
-            icon_prefixes: list[str] = []
+            # Check if this plugin is an icon library.
+            # cnames is also reused below for the custom-element check.
             community_dir = self.config_dir / "www" / "community"
-            for cname in [repo_short, full_name.split("/")[-1] if "/" in full_name else ""]:
-                if not cname:
-                    continue
-                d = community_dir / cname
-                if d.is_dir():
-                    for js_file in d.glob("*.js"):
-                        icon_prefixes.extend(
-                            await self.hass.async_add_executor_job(
-                                self._extract_icon_prefixes, js_file
-                            )
-                        )
+            cnames = list(
+                dict.fromkeys(
+                    c
+                    for c in [
+                        repo_short,
+                        full_name.split("/")[-1] if "/" in full_name else "",
+                    ]
+                    if c
+                )
+            )
+            icon_prefixes: list[str] = await self.hass.async_add_executor_job(
+                self._scan_dir_for_icon_prefixes, community_dir, cnames
+            )
 
             is_used = False
             if is_card_mod:
                 is_used = "__card_mod__" in used_types
             elif icon_prefixes:
-                # Icon library \u2014 used if any of its prefixes appear in dashboards
+                # Icon library — used if any of its prefixes appear in dashboards
                 for pfx in icon_prefixes:
                     if pfx in used_icon_prefixes:
                         is_used = True
@@ -821,21 +864,12 @@ class ComponentScanner:
                     is_used = False  # no card types derived at all
                 elif not is_used:
                     # Check if this is a utility (no custom element
-                    # definitions found in JS \u2014 only derived from filename)
-                    has_ce = False
-                    for cname in [repo_short, full_name.split("/")[-1] if "/" in full_name else ""]:
-                        if not cname:
-                            continue
-                        d = community_dir / cname
-                        if d.is_dir():
-                            for js_file in d.glob("*.js"):
-                                if self._has_custom_element_calls(js_file):
-                                    has_ce = True
-                                    break
-                        if has_ce:
-                            break
+                    # definitions found in JS — only derived from filename)
+                    has_ce = await self.hass.async_add_executor_job(
+                        self._scan_dir_has_custom_elements, community_dir, cnames
+                    )
                     if not has_ce:
-                        # No custom elements found \u2014 it's a utility plugin.
+                        # No custom elements found — it's a utility plugin.
                         # Mark as used (it's loaded as a resource for a reason).
                         is_used = True
 
@@ -868,8 +902,8 @@ class ComponentScanner:
         """Return the set of integration domains that are in use.
 
         Combines:
-        * ``core.config_entries`` \u2014 UI-configured integrations.
-        * ``hass.config.components`` \u2014 all loaded components at runtime,
+        * ``core.config_entries`` — UI-configured integrations.
+        * ``hass.config.components`` — all loaded components at runtime,
           which includes YAML-configured integrations.
         """
         data = await self._load_storage_file("core.config_entries")
@@ -1085,6 +1119,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 # Sensor descriptions
 # ---------------------------------------------------------------------------
 
+
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     SensorEntityDescription(
         key=SENSOR_ALL_COMPONENTS,
@@ -1188,8 +1223,15 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
 
         if key == SENSOR_ALL_COMPONENTS:
             components = self.coordinator.data.get("all_components", [])
-            attrs[ATTR_COMPONENTS] = components
             attrs[ATTR_TOTAL_COMPONENTS] = len(components)
+            # Store only a per-category summary rather than the full component
+            # list, which can exceed Home Assistant's 16 384-byte attribute
+            # size limit for users with many HACS components installed.
+            by_category: dict[str, int] = {}
+            for comp in components:
+                cat = comp.get("type", "Unknown")
+                by_category[cat] = by_category.get(cat, 0) + 1
+            attrs["by_category"] = by_category
 
         elif key in (
             SENSOR_UNUSED_INTEGRATIONS,
