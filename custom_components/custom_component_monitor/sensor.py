@@ -739,7 +739,7 @@ class ComponentScanner:
                 # load_yaml resuelve automáticamente los !include y !secret de forma recursiva
                 return load_yaml(str(path))
             except (HomeAssistantError, OSError) as err:
-                _LOGGER.error("Error al procesar el archivo YAML %s: %s", path, err)
+                _LOGGER.error("Error processing YAML file %s: %s", path, err)
                 return {}
 
         yaml_dashboards = await self.hass.async_add_executor_job(
