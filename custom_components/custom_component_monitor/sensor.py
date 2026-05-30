@@ -1059,24 +1059,33 @@ class ComponentScanner:
     # -- updates -------------------------------------------------------------
 
     @staticmethod
-    def _repo_has_pending_update(repo: dict[str, Any]) -> bool:
-        """Return True if *repo* has a HACS update available.
+    def _pending_update_versions(
+        repo: dict[str, Any]
+    ) -> tuple[str, str] | None:
+        """Return ``(current, available)`` if *repo* has a pending update.
 
         Mirrors HACS's own logic: repositories tracking releases compare the
         installed version against the latest available version, while
-        repositories tracking the default branch compare commit hashes.
+        repositories tracking the default branch compare commit hashes. The
+        returned versions always come from the same pair that detected the
+        update, so a branch-tracked repo reports its commits (not a stale
+        ``version_installed`` string) and vice versa.
         """
         version_installed = repo.get("version_installed")
         last_version = repo.get("last_version")
         if repo.get("releases") and version_installed and last_version:
-            return version_installed != last_version
+            if version_installed != last_version:
+                return version_installed, last_version
+            return None
 
         installed_commit = repo.get("installed_commit")
         last_commit = repo.get("last_commit")
         if installed_commit and last_commit:
-            return installed_commit != last_commit
+            if installed_commit != last_commit:
+                return installed_commit, last_commit
+            return None
 
-        return False
+        return None
 
     async def scan_updates(self) -> dict[str, Any]:
         """Scan HACS-installed components for pending updates.
@@ -1093,8 +1102,10 @@ class ComponentScanner:
                 continue
             if not repo.get("installed", False):
                 continue
-            if not self._repo_has_pending_update(repo):
+            versions = self._pending_update_versions(repo)
+            if versions is None:
                 continue
+            current_version, available_version = versions
 
             full_name = repo.get("full_name", "")
             repo_manifest = repo.get("repository_manifest", {}) or {}
@@ -1115,16 +1126,8 @@ class ComponentScanner:
                     "repository": (
                         f"https://github.com/{full_name}" if full_name else ""
                     ),
-                    "current_version": (
-                        repo.get("version_installed")
-                        or repo.get("installed_commit")
-                        or "unknown"
-                    ),
-                    "available_version": (
-                        repo.get("last_version")
-                        or repo.get("last_commit")
-                        or "unknown"
-                    ),
+                    "current_version": current_version,
+                    "available_version": available_version,
                 }
             )
 
