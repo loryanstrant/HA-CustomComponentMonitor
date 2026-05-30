@@ -59,7 +59,8 @@ Screenshots below are from the original Update Action Tracker repository and sho
   - **Integrations**: Checks `core.config_entries` for configured HACS domains
   - **Themes**: Scans Lovelace dashboard configs and HA theme settings for active themes
   - **Frontend Cards**: Matches `custom:` card types in dashboards against installed HACS plugins
-- 🃏 **Dashboard Card**: Built-in Lovelace card with collapsible sections, sort options, and section filtering
+- 🔔 **HACS Update Count**: `sensor.hacs_updates` reports how many HACS components have a pending update — ideal for conditional cards and automations
+- 🃏 **Dashboard Card**: Built-in Lovelace card with collapsible sections (optionally collapsed by default), an icon-based sort toggle, and section filtering
 - 🧮 **Section-aware Summary Totals**: Installed, used, and unused counts are calculated from the selected card sections
 - 🏷️ **Repository Links**: Direct links to each component's repository
 - 📅 **Installation Tracking**: Shows how long each component has been installed
@@ -107,7 +108,7 @@ Or replace steps 1–6 with this:
 
 ## Entities
 
-The integration creates four sensors and one to-do entity:
+The integration creates five sensors and one to-do entity:
 
 | Entity | Description |
 |--------|-------------|
@@ -115,6 +116,7 @@ The integration creates four sensors and one to-do entity:
 | `sensor.unused_custom_integrations` | Count and details of unused custom integrations |
 | `sensor.unused_custom_themes` | Count and details of unused custom themes |
 | `sensor.unused_frontend_resources` | Count and details of unused frontend cards/plugins |
+| `sensor.hacs_updates` | Count of HACS-installed components with a pending update, with details of each |
 | `todo.hacs_update_actions` | Persistent to-do list for HACS updates installed with follow-up actions |
 
 ### Sensor Attributes
@@ -124,6 +126,12 @@ Each unused sensor provides:
 - `total_components` — total installed in that category
 - `used_components` — count of components in active use
 - `unused_components` — list of unused items with name, version, repository URL, days installed, and category-specific metadata (domain, card type, theme variants)
+
+The `sensor.hacs_updates` sensor provides:
+
+- `updates` — list of components with a pending update, each with `name`, `type`, `repository`, `current_version`, and `available_version`
+
+Because its state is a simple count, you can show a card or trigger an automation only when updates exist — for example with a conditional card on `sensor.hacs_updates` being above `0`, mirroring how you might gate the unused-components card on the unused sensors.
 
 ### To-do Entity
 
@@ -167,6 +175,7 @@ title: Custom Component Monitor
 | `title` | string | `Custom Component Monitor` | Card title |
 | `sort` | string | `name` | Default sort order: `name` or `days` |
 | `sections` | list | `["integrations", "themes", "frontend"]` | Which sections to display |
+| `collapsed_by_default` | boolean | `false` | Start with every section collapsed; users can still expand them |
 
 #### Examples
 
@@ -207,11 +216,19 @@ sections:
   - frontend
 ```
 
+**Compact card with all sections collapsed by default:**
+
+```yaml
+type: custom:custom-component-monitor-card
+title: Unused Components
+collapsed_by_default: true
+```
+
 #### Card Features
 
 - **Summary bar** showing installed / used / unused counts for the selected sections only
-- **Collapsible sections** that remember their open/closed state
-- **Sort toggle** to switch between alphabetical and days-installed ordering
+- **Collapsible sections** that remember their open/closed state, with an optional `collapsed_by_default` start state
+- **Icon sort toggle** in the header (A→Z for name, calendar for days installed) that keeps the card width stable
 - **Section filtering** to show only the categories you care about
 - **Repository links** for each unused component
 - **Visual config editor** for all options
@@ -309,6 +326,8 @@ Scans all Lovelace dashboard configurations and the system/user theme settings f
 Derives expected `custom:` card type names from HACS plugin JS filenames, then searches all Lovelace dashboards for matching `type: custom:xxx` references. Utility plugins like `card-mod` are special-cased.
 
 ### HACS Updates
+
+`sensor.hacs_updates` counts HACS-installed components that have a pending update. A component is treated as having an update when its installed release version differs from the latest available version — or, for components that track a branch instead of releases, when the installed commit differs from the latest commit. The `updates` attribute lists each pending update with its current and available version, so a card or automation can react whenever the count rises above zero.
 
 The update card looks for pending `update.*` entities provided by HACS. For **Update & Action**, it calls Home Assistant's `update.install` service and then creates a persistent item in `todo.hacs_update_actions` with release context and release notes when available.
 
