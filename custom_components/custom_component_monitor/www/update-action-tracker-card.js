@@ -2,10 +2,10 @@
  * Update Action Tracker Card
  * Lists HACS integrations with pending updates and provides
  * Skip, Update, and Update & Action buttons.
- * v0.1.1
+ * v1.5.1
  */
 
-const CARD_VERSION = "1.5.0";
+const CARD_VERSION = "1.5.1";
 const UAT_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -113,7 +113,9 @@ class UpdateActionTrackerCard extends HTMLElement {
       if (eid.startsWith("update.")) {
         const s = this._hass.states[eid];
         const prog = s.attributes.in_progress;
-        parts.push(eid + "=" + s.state + "|" + (s.attributes.installed_version || "") + "|" + (s.attributes.latest_version || "") + "|" + String(prog));
+        // update_percentage drives the determinate progress bar (#66); include
+        // it so percentage changes during an install trigger a re-render.
+        parts.push(eid + "=" + s.state + "|" + (s.attributes.installed_version || "") + "|" + (s.attributes.latest_version || "") + "|" + String(prog) + "|" + String(s.attributes.update_percentage));
       }
     }
     return parts.sort().join("||");
@@ -192,7 +194,14 @@ class UpdateActionTrackerCard extends HTMLElement {
         }
       }
     }
-    return updateEntities.filter((eid) => this._hacsEntities.has(eid));
+    const filtered = updateEntities.filter((eid) => this._hacsEntities.has(eid));
+    // Sort alphabetically by display name, like native HACS (#69).
+    filtered.sort((a, b) => {
+      const na = (this._hass.states[a].attributes.friendly_name || a).toLowerCase();
+      const nb = (this._hass.states[b].attributes.friendly_name || b).toLowerCase();
+      return na.localeCompare(nb);
+    });
+    return filtered;
   }
 
   /* -- Progress helper ---------------------------------------- */
@@ -201,14 +210,21 @@ class UpdateActionTrackerCard extends HTMLElement {
     const state = this._hass.states[entityId];
     if (!state) return null;
     const prog = state.attributes.in_progress;
+    // Modern HA reports the real percentage in update_percentage (in_progress
+    // is just a boolean); older entities put the number in in_progress (#66).
+    const pctAttr = state.attributes.update_percentage;
     const actionState = this._actionInProgress[entityId];
 
-    if (prog === true || (actionState && prog !== false)) {
-      return { active: true, percent: null, label: "Installing\u2026" };
+    if (typeof pctAttr === "number") {
+      const pct = Math.min(100, Math.max(0, Math.round(pctAttr)));
+      return { active: true, percent: pct, label: pct + "%" };
     }
     if (typeof prog === "number" && prog >= 0) {
       const pct = Math.min(100, Math.max(0, Math.round(prog)));
       return { active: true, percent: pct, label: pct + "%" };
+    }
+    if (prog === true || (actionState && prog !== false)) {
+      return { active: true, percent: null, label: "Installing\u2026" };
     }
     if (actionState === "skip") {
       return { active: true, percent: null, label: "Skipping\u2026" };
@@ -392,6 +408,47 @@ class UpdateActionTrackerCard extends HTMLElement {
     if (!text) return "";
     let html = uatEscapeHtml(text);
 
+    /* Alerts (#68). Render before the line-based transforms so multi-line
+       bodies survive. uatEscapeHtml escapes < > & but NOT quotes, so the
+       real escaped form is &lt;ha-alert alert-type="warning"&gt;…&lt;/ha-alert&gt;. */
+    const alertClass = (t) => {
+      const k = String(t).toLowerCase();
+      if (k === "warning") return "warning";
+      if (k === "error" || k === "danger" || k === "caution") return "error";
+      if (k === "success" || k === "tip") return "success";
+      return "info"; // note, important, info, hint, default
+    };
+    // HA alert element (any/no quotes around the type, body may span lines).
+    html = html.replace(
+      /&lt;ha-alert\s+alert-type=["']?([a-zA-Z]+)["']?\s*&gt;([\s\S]*?)&lt;\/ha-alert&gt;/g,
+      (_m, type, body) =>
+        '<div class="ha-alert ha-alert-' + alertClass(type) + '">' +
+        body.trim().replace(/\n/g, "<br>") + "</div>"
+    );
+    // GitHub-style alerts: > [!NOTE] / [!TIP] / [!IMPORTANT] / [!WARNING] / [!CAUTION]
+    html = html.replace(
+      /(?:^|\n)&gt;\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][^\n]*\n((?:&gt;[^\n]*(?:\n|$))*)/g,
+      (_m, type, body) => {
+        const inner = body
+          .split("\n")
+          .map((l) => l.replace(/^&gt;\s?/, ""))
+          .join("<br>")
+          .replace(/(?:<br>)+$/, "")
+          .trim();
+        return '\n<div class="ha-alert ha-alert-' + alertClass(type) + '">' + inner + "</div>\n";
+      }
+    );
+
+    /* Release notes often wrap content in layout-only HTML (e.g.
+       <div align="center">). uatEscapeHtml turned those into &lt;div&gt;, which
+       would show as literal tag text — strip them (the alert <div>s above use
+       unescaped < so they're untouched). Keep <br> as a line break. */
+    html = html.replace(/&lt;br\s*\/?&gt;/gi, "<br>");
+    html = html.replace(
+      /&lt;\/?(?:div|center|p|span|details|summary|figure|picture|sub|sup)\b[^&]*?&gt;/gi,
+      ""
+    );
+
     html = html.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
     html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
     html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
@@ -406,10 +463,6 @@ class UpdateActionTrackerCard extends HTMLElement {
       /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
     );
-    html = html.replace(
-      /&lt;ha-alert alert-type=&#039;(.+?)&#039;&gt;(.+?)&lt;\/ha-alert&gt;/g,
-      '<div class="ha-alert ha-alert-$1">$2</div>'
-    );
     html = html.replace(/\n\n/g, "</p><p>");
     html = "<p>" + html + "</p>";
     html = html.replace(/<p>\s*<\/p>/g, "");
@@ -418,6 +471,8 @@ class UpdateActionTrackerCard extends HTMLElement {
     html = html.replace(/<p>(<hr \/>)<\/p>/g, "$1");
     html = html.replace(/<p>(<ul>)/g, "$1");
     html = html.replace(/(<\/ul>)<\/p>/g, "$1");
+    html = html.replace(/<p>(<div class="ha-alert)/g, "$1");
+    html = html.replace(/(<\/div>)<\/p>/g, "$1");
     return html;
   }
 
@@ -496,6 +551,8 @@ class UpdateActionTrackerCard extends HTMLElement {
       ".notes-content .ha-alert { padding:8px 12px; border-radius:4px; margin:8px 0; font-size:0.9em; }",
       ".notes-content .ha-alert-warning { background:rgba(255,152,0,0.15); border-left:3px solid var(--uat-orange); }",
       ".notes-content .ha-alert-error { background:rgba(244,67,54,0.15); border-left:3px solid #f44336; }",
+      ".notes-content .ha-alert-info { background:rgba(3,155,229,0.15); border-left:3px solid #039be5; }",
+      ".notes-content .ha-alert-success { background:rgba(76,175,80,0.15); border-left:3px solid #4caf50; }",
       ".release-link { margin:0 0 8px 52px; font-size:0.8em; }",
       ".release-link a { color:var(--uat-accent); text-decoration:none; }",
       ".release-link a:hover { text-decoration:underline; }",
