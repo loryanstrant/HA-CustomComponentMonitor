@@ -714,6 +714,17 @@ class ComponentScanner:
         )
         used |= yaml_prefixes
 
+        # Also scan live entity states: integrations can set a custom icon at
+        # runtime (e.g. thermal_comfort applies `icon: tc:…`), which never lands
+        # in the entity registry on disk but is visible on the entity state (#56).
+        prefix_re = re.compile(r"[a-z][a-z0-9_-]*$")
+        for state in self.hass.states.async_all():
+            icon = state.attributes.get("icon")
+            if isinstance(icon, str) and ":" in icon:
+                prefix = icon.split(":", 1)[0].strip().lower()
+                if prefix and prefix not in builtin and prefix_re.match(prefix):
+                    used.add(prefix)
+
         _LOGGER.debug("Used icon prefixes: %s", used)
         return used
 
