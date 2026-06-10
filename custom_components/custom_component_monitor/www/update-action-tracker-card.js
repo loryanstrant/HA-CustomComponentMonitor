@@ -2,10 +2,10 @@
  * Update Action Tracker Card
  * Lists HACS integrations with pending updates and provides
  * Skip, Update, and Update & Action buttons.
- * v1.5.1
+ * v1.5.2
  */
 
-const CARD_VERSION = "1.5.1";
+const CARD_VERSION = "1.5.2";
 const UAT_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -71,6 +71,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     this._actionInProgress = {};
     this._lastStateHash = "";
     this._progressPollTimer = null;
+    this._typeFilter = "all"; // #69: filter updates by component type
   }
 
   /* -- Lovelace lifecycle ------------------------------------- */
@@ -86,6 +87,7 @@ class UpdateActionTrackerCard extends HTMLElement {
   setConfig(config) {
     this._config = Object.assign({ title: "HACS Update Tracker" }, config);
     this._lastStateHash = "";
+    if (config && config.default_filter) this._typeFilter = config.default_filter;
     if (this._hass) this._doRender();
   }
 
@@ -204,6 +206,45 @@ class UpdateActionTrackerCard extends HTMLElement {
     return filtered;
   }
 
+  /* -- Type classification (#69) ------------------------------ */
+
+  _repoKey(url) {
+    const m = String(url || "").toLowerCase().match(/github\.com\/([^/]+\/[^/#?]+)/);
+    return m ? m[1].replace(/\.git$/, "") : "";
+  }
+
+  _catOf(typeStr) {
+    const t = String(typeStr || "").toLowerCase();
+    if (t.includes("integration")) return "integration";
+    if (t.includes("theme")) return "theme";
+    if (t.includes("card") || t.includes("frontend") || t.includes("plugin") || t.includes("lovelace")) return "card";
+    return "other";
+  }
+
+  // Build {repoKey|name -> category} from this integration's sensor.hacs_updates,
+  // since the HACS update.* entities themselves carry no type/category.
+  _buildTypeMap() {
+    const byRepo = {}, byName = {};
+    const s = this._hass.states["sensor.hacs_updates"];
+    const updates = (s && s.attributes && s.attributes.updates) || [];
+    for (const u of updates) {
+      const cat = this._catOf(u.type);
+      const rk = this._repoKey(u.repository);
+      if (rk) byRepo[rk] = cat;
+      if (u.name) byName[String(u.name).toLowerCase().trim()] = cat;
+    }
+    return { byRepo, byName };
+  }
+
+  _typeOf(entityId, map) {
+    const a = (this._hass.states[entityId] || {}).attributes || {};
+    const rk = this._repoKey(a.release_url);
+    if (rk && map.byRepo[rk]) return map.byRepo[rk];
+    const name = String(a.friendly_name || "").replace(/ update$/i, "").toLowerCase().trim();
+    if (name && map.byName[name]) return map.byName[name];
+    return "other";
+  }
+
   /* -- Progress helper ---------------------------------------- */
 
   _getProgressInfo(entityId) {
@@ -307,11 +348,44 @@ class UpdateActionTrackerCard extends HTMLElement {
     const entities = await this._getHacsUpdateEntities();
     const title = uatEscapeHtml(this._config.title || "HACS Update Tracker");
 
+    /* Classify each update by component type for the filter chips (#69). */
+    const typeMap = this._buildTypeMap();
+    const cats = {};
+    for (const eid of entities) {
+      const c = this._typeOf(eid, typeMap);
+      (cats[c] = cats[c] || []).push(eid);
+    }
+    const present = Object.keys(cats);
+    // Drop a stale filter (e.g. the last item of that type just updated).
+    if (this._typeFilter !== "all" && !present.includes(this._typeFilter)) {
+      this._typeFilter = "all";
+    }
+    const shown = this._typeFilter === "all" ? entities : (cats[this._typeFilter] || []);
+
     let contentHtml;
     if (entities.length === 0) {
       contentHtml = '<div class="empty"><ha-icon icon="mdi:check-circle-outline"></ha-icon><span>All HACS integrations are up to date!</span></div>';
+    } else if (shown.length === 0) {
+      contentHtml = '<div class="empty"><span>No updates of this type.</span></div>';
     } else {
-      contentHtml = entities.map((eid) => this._renderItem(eid)).join("");
+      contentHtml = shown.map((eid) => this._renderItem(eid)).join("");
+    }
+
+    /* Filter chips - only when there's more than one type to pick between. */
+    let filtersHtml = "";
+    if (entities.length > 0 && present.length > 1) {
+      const labels = { integration: "Integrations", card: "Cards", theme: "Themes", other: "Other" };
+      const order = ["integration", "card", "theme", "other"];
+      const chip = (key, lbl, n) =>
+        '<button class="chip' + (this._typeFilter === key ? " active" : "") + '" data-filter="' + key + '">' +
+        uatEscapeHtml(lbl) + ' <span class="chip-count">' + n + "</span></button>";
+      filtersHtml =
+        '<div class="filters">' +
+        chip("all", "All", entities.length) +
+        order.filter((c) => present.includes(c))
+             .map((c) => chip(c, labels[c] || c, cats[c].length))
+             .join("") +
+        "</div>";
     }
 
     const badgeClass = entities.length > 0 ? "pending" : "clean";
@@ -326,6 +400,7 @@ class UpdateActionTrackerCard extends HTMLElement {
       '<span class="title">' + title + '</span>' +
       '<span class="badge ' + badgeClass + '">' + badgeText + '</span>' +
       '</div>' +
+      filtersHtml +
       '<div class="items">' + contentHtml + '</div>' +
       '</ha-card>';
 
@@ -494,6 +569,13 @@ class UpdateActionTrackerCard extends HTMLElement {
         else if (action === "update_action") self._handleUpdateAndAction(eid);
       });
     });
+    this.shadowRoot.querySelectorAll(".chip[data-filter]").forEach(function(chip) {
+      chip.addEventListener("click", function(e) {
+        e.stopPropagation();
+        self._typeFilter = chip.getAttribute("data-filter");
+        self._doRender();
+      });
+    });
   }
 
   /* -- Styles ------------------------------------------------- */
@@ -514,6 +596,11 @@ class UpdateActionTrackerCard extends HTMLElement {
       ".badge { font-size:0.8em; padding:2px 10px; border-radius:12px; font-weight:500; color:#fff; }",
       ".badge.clean { background:var(--uat-green); }",
       ".badge.pending { background:var(--uat-orange); }",
+      ".filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }",
+      ".chip { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:14px; cursor:pointer; font-size:0.82em; font-family:inherit; color:var(--uat-secondary); background:var(--uat-row-bg, rgba(127,127,127,0.08)); border:1px solid var(--divider-color, rgba(127,127,127,0.2)); }",
+      ".chip:hover { background:var(--uat-row-hover, rgba(127,127,127,0.16)); }",
+      ".chip.active { background:var(--primary-color, #03a9f4); color:#fff; border-color:var(--primary-color, #03a9f4); }",
+      ".chip-count { font-size:0.85em; opacity:0.85; }",
       ".empty { display:flex; align-items:center; gap:8px; padding:16px 0; color:var(--uat-secondary); font-style:italic; }",
       ".empty ha-icon { --mdc-icon-size:24px; color:var(--uat-green); }",
       ".item { border-bottom:1px solid var(--uat-divider); }",
