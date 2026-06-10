@@ -104,7 +104,14 @@ class ComponentScanner:
         except (yaml.YAMLError, OSError):
             return []
         lovelace = raw.get("lovelace", {}) or {}
+        # `lovelace:` / `dashboards:` may be a string (e.g. `dashboards: !include
+        # dashboards.yaml`, which our loader represents as a scalar) rather than a
+        # mapping. Guard so the whole scan doesn't abort (#54).
+        if not isinstance(lovelace, dict):
+            return []
         dashboards = lovelace.get("dashboards", {}) or {}
+        if not isinstance(dashboards, dict):
+            dashboards = {}
         paths: list[Path] = []
         for dash_cfg in dashboards.values():
             if not isinstance(dash_cfg, dict):
@@ -507,11 +514,26 @@ class ComponentScanner:
                     stem = js_file.stem.lower()
                     if stem not in names and not stem.endswith(".gz"):
                         names.append(stem)
+                    # Strip common packaging suffixes so e.g.
+                    # "mini-media-player-bundle" → "mini-media-player" (#60).
+                    for suf in ("-bundle", "-min", ".min", "-umd", "-esm"):
+                        if stem.endswith(suf):
+                            base = stem[: -len(suf)]
+                            if base and base not in names:
+                                names.append(base)
                     # Extract actual registered custom element names from JS
                     ce_names = self._extract_custom_elements(js_file)
                     for ce in ce_names:
                         if ce not in names:
                             names.append(ce)
+
+        # 2b) The repo name itself is very commonly the card type, even when the
+        #     main element is registered via a non-literal the JS scan can't see
+        #     (e.g. mini-media-player). Add it (and prefix-stripped form) (#60).
+        repo_name = repo_short.lower()
+        for cand in (repo_name, repo_name[3:] if repo_name.startswith("ha-") else ""):
+            if cand and cand not in names:
+                names.append(cand)
 
         # 3) Add prefix-stripped variants for every name collected so far
         #    (e.g. "lovelace-horizon-card" → "horizon-card")
