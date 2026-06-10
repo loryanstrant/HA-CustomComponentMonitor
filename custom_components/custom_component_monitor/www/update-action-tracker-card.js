@@ -439,6 +439,16 @@ class UpdateActionTrackerCard extends HTMLElement {
       }
     );
 
+    /* Release notes often wrap content in layout-only HTML (e.g.
+       <div align="center">). uatEscapeHtml turned those into &lt;div&gt;, which
+       would show as literal tag text — strip them (the alert <div>s above use
+       unescaped < so they're untouched). Keep <br> as a line break. */
+    html = html.replace(/&lt;br\s*\/?&gt;/gi, "<br>");
+    html = html.replace(
+      /&lt;\/?(?:div|center|p|span|details|summary|figure|picture|sub|sup)\b[^&]*?&gt;/gi,
+      ""
+    );
+
     html = html.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
     html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
     html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
