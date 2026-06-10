@@ -23,11 +23,13 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_COMPONENTS,
+    ATTR_EXCLUDED_COMPONENTS,
     ATTR_TOTAL_COMPONENTS,
     ATTR_UNUSED_COMPONENTS,
     ATTR_UPDATES,
     ATTR_USED_COMPONENTS,
     CATEGORY_MAP,
+    CONF_EXCLUDE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     SENSOR_ALL_COMPONENTS,
@@ -1177,15 +1179,45 @@ class ComponentScanner:
 class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator that drives periodic scans."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry | None = None) -> None:
         """Initialize."""
         self.scanner = ComponentScanner(hass)
+        self.entry = entry
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
         )
+
+    def _excluded_keys(self) -> set[str]:
+        """Lower-cased set of user-excluded component identifiers (#70)."""
+        raw = (self.entry.options.get(CONF_EXCLUDE, []) if self.entry else []) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return {str(x).strip().lower() for x in raw if str(x).strip()}
+
+    def _apply_exclusions(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Move user-excluded components out of ``unused`` into ``used`` and
+        record them under ``excluded`` (#70)."""
+        excl = self._excluded_keys()
+        moved: list[dict[str, Any]] = []
+        if excl:
+            kept: list[dict[str, Any]] = []
+            for item in result.get("unused", []):
+                keys = {
+                    str(item.get(k, "")).strip().lower()
+                    for k in ("name", "domain", "card_type")
+                    if item.get(k)
+                }
+                if keys & excl:
+                    moved.append(item)
+                else:
+                    kept.append(item)
+            result["unused"] = kept
+            result["used"] = result.get("used", []) + moved
+        result["excluded"] = moved
+        return result
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from HACS storage."""
@@ -1197,7 +1229,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "Scanned %d HACS-installed components", len(all_components)
             )
 
-            themes = await self.scanner.scan_themes()
+            themes = self._apply_exclusions(await self.scanner.scan_themes())
             _LOGGER.debug(
                 "Theme scan: %d total, %d used, %d unused",
                 themes["total"],
@@ -1205,7 +1237,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(themes["unused"]),
             )
 
-            frontend = await self.scanner.scan_frontend()
+            frontend = self._apply_exclusions(await self.scanner.scan_frontend())
             _LOGGER.debug(
                 "Frontend scan: %d total, %d used, %d unused",
                 frontend["total"],
@@ -1213,7 +1245,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(frontend["unused"]),
             )
 
-            integrations = await self.scanner.scan_integrations()
+            integrations = self._apply_exclusions(await self.scanner.scan_integrations())
             _LOGGER.debug(
                 "Integration scan: %d total, %d used, %d unused",
                 integrations["total"],
@@ -1282,7 +1314,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = CustomComponentMonitorCoordinator(hass)
+    coordinator = CustomComponentMonitorCoordinator(hass, config_entry)
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception as exc:
@@ -1376,6 +1408,7 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
             attrs[ATTR_TOTAL_COMPONENTS] = data.get("total", 0)
             attrs[ATTR_USED_COMPONENTS] = len(data.get("used", []))
             attrs[ATTR_UNUSED_COMPONENTS] = data.get("unused", [])
+            attrs[ATTR_EXCLUDED_COMPONENTS] = data.get("excluded", [])
 
         elif key == SENSOR_HACS_UPDATES:
             data = self.coordinator.data.get("updates", {})
