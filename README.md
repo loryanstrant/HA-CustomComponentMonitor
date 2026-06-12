@@ -69,6 +69,7 @@ Screenshots below are from the original Update Action Tracker repository and sho
 ### HACS Update Action Tracker
 
 - 📋 **Smart Update Card**: Lists pending HACS integration updates with Skip, Update, and Update & Action buttons
+- 🚀 **Update All**: One button (and a service) to install every pending HACS update in a single action
 - 📝 **Expandable Release Notes**: Fetches release notes directly from Home Assistant update entities
 - 🔗 **Release Links**: Links to the GitHub release page when provided by the update entity
 - 🔄 **Real-time Progress Tracking**: Shows installation progress and disables action buttons during active updates
@@ -260,6 +261,7 @@ title: HACS Update Tracker
 - Lists pending HACS integration updates
 - Shows component icon, current version, and available version
 - Provides **Skip**, **Update**, and **Update & Action** buttons
+- Offers an **Update all (N)** button to install every pending update at once (with a confirmation)
 - Displays a pending count badge, or **Up to date** when clear
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing
@@ -290,6 +292,22 @@ Example service call:
 service: custom_component_monitor.update_and_action
 data:
   entity_id: update.my_integration_update
+```
+
+### `custom_component_monitor.update_all`
+
+Installs **every** pending HACS update in one call. It walks all `update` entities that are HACS-installed, on, and not already updating, and installs each one.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `create_actions` | No | When `true`, each update is installed via `update_and_action` so a follow-up to-do item is created per component (default `false`) |
+
+Example service call:
+
+```yaml
+service: custom_component_monitor.update_all
+data:
+  create_actions: true
 ```
 
 ## Migration from HACS Update Action Tracker
