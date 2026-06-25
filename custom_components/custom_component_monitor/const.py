@@ -37,3 +37,7 @@ SERVICE_UPDATE_AND_ACTION = "update_and_action"
 SERVICE_UPDATE_ALL = "update_all"
 UAT_CARD_JS = "update-action-tracker-card.js"
 UAT_CARD_BASE_PATH = f"/local/{DOMAIN}/{UAT_CARD_JS}"
+
+# --- Recently Installed but Unused card ---
+RIU_CARD_JS = "recently-installed-unused-card.js"
+RIU_CARD_BASE_PATH = f"/local/{DOMAIN}/{RIU_CARD_JS}"

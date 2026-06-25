@@ -17,6 +17,7 @@ From v1.3.0, it also includes the former **HACS Update Action Tracker** function
 
 - the Custom Component Monitor dashboard card
 - the HACS Update Action Tracker dashboard card
+- the Recently Installed but Unused dashboard card
 - a persistent `todo.hacs_update_actions` to-do list
 - the `custom_component_monitor.update_and_action` service
 
@@ -147,12 +148,13 @@ Items persist across Home Assistant restarts using local storage.
 
 ## Dashboard Cards
 
-The integration automatically registers two Lovelace cards:
+The integration automatically registers three Lovelace cards:
 
 | Card type | Purpose |
 |-----------|---------|
 | `custom:custom-component-monitor-card` | Shows installed/used/unused HACS components by category |
 | `custom:update-action-tracker-card` | Shows pending HACS updates with Skip, Update, and Update & Action buttons |
+| `custom:recently-installed-unused-card` | Shows HACS components installed within a recent window (default 30 days) that are still unused |
 
 ### Custom Component Monitor Card
 
@@ -265,6 +267,42 @@ title: HACS Update Tracker
 - Displays a pending count badge, or **Up to date** when clear
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing
+
+### Recently Installed but Unused Card
+
+Surfaces HACS integrations, themes, and frontend cards that were installed within a recent window (default 30 days) and are still unused — the "I installed this and forgot to wire it up" view. It reads the same `sensor.unused_*` entities as the main card and filters each unused list by how long ago the item was installed, so it needs no extra configuration to work.
+
+#### Via UI
+
+1. Edit a dashboard → **Add Card**
+2. Search for **Recently Installed but Unused**
+3. Optionally adjust the window (days) and visible sections
+
+#### Via YAML
+
+```yaml
+type: custom:recently-installed-unused-card
+title: Recently Installed but Unused
+days_window: 30
+```
+
+#### Card Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | `Recently Installed but Unused` | Card title |
+| `days_window` | number | `30` | Only show unused items installed within this many days |
+| `sections` | list | `["integrations", "themes", "frontend"]` | Which categories to display |
+
+#### Card Features
+
+- Lists only unused items installed within the configured window, newest installs first ("today", "1d ago", …)
+- Groups results by Integrations / Themes / Frontend Cards, hiding empty groups
+- Shows a count badge, or a friendly "all clear" message when nothing recent is unused
+- Repository links and version per item
+- **Visual config editor** for all options
+
+> **Note:** install age is derived from the component's files on disk, so a HACS *update* can reset the clock and make an older component look freshly installed. Items whose install date can't be determined are hidden (and counted in the footer).
 
 ## Services
 
