@@ -24,6 +24,8 @@ from .const import (
     SERVICE_UPDATE_ALL,
     UAT_CARD_JS,
     UAT_CARD_BASE_PATH,
+    RIU_CARD_JS,
+    RIU_CARD_BASE_PATH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,16 +63,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     src_uat = Path(__file__).parent / "www" / UAT_CARD_JS
     dest_uat = www_dir / UAT_CARD_JS
 
+    src_riu = Path(__file__).parent / "www" / RIU_CARD_JS
+    dest_riu = www_dir / RIU_CARD_JS
+
     def _copy_cards():
         www_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src_ccm), str(dest_ccm))
         shutil.copy2(str(src_uat), str(dest_uat))
+        shutil.copy2(str(src_riu), str(dest_riu))
 
     await hass.async_add_executor_job(_copy_cards)
 
     async def _deferred_register(_event):
         await _register_lovelace_resource(hass, CARD_BASE_PATH, CARD_JS)
         await _register_lovelace_resource(hass, UAT_CARD_BASE_PATH, UAT_CARD_JS)
+        await _register_lovelace_resource(hass, RIU_CARD_BASE_PATH, RIU_CARD_JS)
 
     hass.bus.async_listen_once("homeassistant_started", _deferred_register)
 
