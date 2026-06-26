@@ -9,7 +9,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -1279,26 +1283,36 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         key=SENSOR_ALL_COMPONENTS,
         name="HACS Installed Components",
         icon="mdi:package-variant",
+        native_unit_of_measurement="components",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
         key=SENSOR_UNUSED_INTEGRATIONS,
         name="Unused Custom Integrations",
         icon="mdi:puzzle-outline",
+        native_unit_of_measurement="integrations",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
         key=SENSOR_UNUSED_THEMES,
         name="Unused Custom Themes",
         icon="mdi:palette-outline",
+        native_unit_of_measurement="themes",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
         key=SENSOR_UNUSED_FRONTEND,
         name="Unused Frontend Resources",
         icon="mdi:web",
+        native_unit_of_measurement="resources",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
         key=SENSOR_HACS_UPDATES,
         name="HACS Updates",
         icon="mdi:package-up",
+        native_unit_of_measurement="updates",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
 ]
 
