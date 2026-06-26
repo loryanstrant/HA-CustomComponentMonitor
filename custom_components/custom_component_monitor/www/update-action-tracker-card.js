@@ -2,10 +2,10 @@
  * Update Action Tracker Card
  * Lists HACS integrations with pending updates and provides
  * Skip, Update, and Update & Action buttons.
- * v1.6.0
+ * v1.9.1
  */
 
-const CARD_VERSION = "1.6.0";
+const CARD_VERSION = "1.9.1";
 const UAT_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
