@@ -1,6 +1,7 @@
 """Sensor platform for Custom Component Monitor."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -16,7 +17,9 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -26,13 +29,22 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AI_CACHE_STORAGE_KEY,
+    AI_CALL_TIMEOUT,
+    AI_CATEGORY_ALIASES,
+    AI_CATEGORY_OPTIONS,
+    AI_MAX_PER_SCAN,
+    ATTR_CATEGORIES,
     ATTR_COMPONENTS,
     ATTR_EXCLUDED_COMPONENTS,
+    ATTR_SUMMARY,
     ATTR_TOTAL_COMPONENTS,
     ATTR_UNUSED_COMPONENTS,
     ATTR_UPDATES,
     ATTR_USED_COMPONENTS,
     CATEGORY_MAP,
+    CONF_AI_CATEGORIZATION_ENABLED,
+    CONF_AI_TASK_ENTITY,
     CONF_EXCLUDE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -41,6 +53,7 @@ from .const import (
     SENSOR_UNUSED_FRONTEND,
     SENSOR_UNUSED_INTEGRATIONS,
     SENSOR_UNUSED_THEMES,
+    STORAGE_VERSION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1187,6 +1200,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Initialize."""
         self.scanner = ComponentScanner(hass)
         self.entry = entry
+        self._ai_store: Store | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -1260,6 +1274,9 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updates = await self.scanner.scan_updates()
             _LOGGER.debug("Update scan: %d pending updates", updates["count"])
 
+            # Optionally enrich each update with AI summary + categories (#67).
+            updates = await self._async_categorise_updates(updates)
+
             return {
                 "all_components": all_components,
                 "themes": themes,
@@ -1271,6 +1288,211 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as exc:
             _LOGGER.error("Error scanning custom components: %s", exc)
             raise UpdateFailed(exc) from exc
+
+    # -- AI summarise & categorise updates (#67) ----------------------------
+
+    async def _async_categorise_updates(
+        self, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Enrich each pending update with AI categories + summary (#67).
+
+        Opt-in: only runs when enabled in options and an AI Task entity is
+        configured. Results are cached per ``name|available_version`` so an
+        unchanged update never triggers a fresh AI call. Failures degrade
+        gracefully — the update is simply left without categories and retried
+        on the next scan; nothing here is allowed to raise.
+        """
+        items: list[dict[str, Any]] = updates.get("updates", [])
+        if not items or self.entry is None:
+            return updates
+
+        enabled = self.entry.options.get(CONF_AI_CATEGORIZATION_ENABLED, False)
+        ai_entity = self.entry.options.get(CONF_AI_TASK_ENTITY) or ""
+        if not enabled or not ai_entity:
+            return updates
+
+        if self._ai_store is None:
+            self._ai_store = Store(self.hass, STORAGE_VERSION, AI_CACHE_STORAGE_KEY)
+        try:
+            cache: dict[str, Any] = (await self._ai_store.async_load()) or {}
+        except Exception:  # pragma: no cover - storage read should not break scan
+            cache = {}
+
+        entity_by_key = self._build_update_entity_map()
+
+        new_calls = 0
+        current_keys: set[str] = set()
+        for item in items:
+            key = f"{item.get('name', '')}|{item.get('available_version', '')}"
+            current_keys.add(key)
+            cached = cache.get(key)
+            if cached:
+                item[ATTR_CATEGORIES] = cached.get("categories", [])
+                item[ATTR_SUMMARY] = cached.get("summary", "")
+                continue
+            if new_calls >= AI_MAX_PER_SCAN:
+                _LOGGER.debug(
+                    "AI categorisation cap (%d) reached; deferring %s",
+                    AI_MAX_PER_SCAN,
+                    key,
+                )
+                continue
+            result = await self._async_categorise_one(item, ai_entity, entity_by_key)
+            if result is not None:
+                item[ATTR_CATEGORIES] = result.get("categories", [])
+                item[ATTR_SUMMARY] = result.get("summary", "")
+                cache[key] = result
+                new_calls += 1
+
+        # Keep the cache bounded: drop entries for updates no longer pending.
+        cache = {k: v for k, v in cache.items() if k in current_keys}
+        try:
+            await self._ai_store.async_save(cache)
+        except Exception:  # pragma: no cover
+            _LOGGER.debug("Failed to persist AI category cache", exc_info=True)
+        if new_calls:
+            _LOGGER.debug("AI categorised %d new update(s)", new_calls)
+        return updates
+
+    def _build_update_entity_map(self) -> dict[str, str]:
+        """Map normalised ``name|version`` (and name-only) → HACS update entity.
+
+        Mirrors the ``platform == "hacs"`` filter used by ``update_all`` and the
+        card's name/repo matching, so a scanned update can be tied back to its
+        ``update.*`` entity to fetch release notes.
+        """
+        registry = er.async_get(self.hass)
+        mapping: dict[str, str] = {}
+        for state in self.hass.states.async_all("update"):
+            entry = registry.async_get(state.entity_id)
+            if entry is None or entry.platform != "hacs":
+                continue
+            title = (
+                state.attributes.get("title")
+                or state.attributes.get("friendly_name")
+                or ""
+            )
+            latest = state.attributes.get("latest_version", "") or ""
+            if not title:
+                continue
+            mapping.setdefault(f"{title}|{latest}".lower(), state.entity_id)
+            mapping.setdefault(title.lower(), state.entity_id)
+        return mapping
+
+    async def _async_categorise_one(
+        self,
+        item: dict[str, Any],
+        ai_entity: str,
+        entity_by_key: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Run a single update through the AI Task; return categories+summary."""
+        name = item.get("name", "")
+        version = item.get("available_version", "")
+        current = item.get("current_version", "")
+        utype = item.get("type", "")
+
+        # Best-effort release notes from the matching update entity.
+        notes = ""
+        entity_id = entity_by_key.get(
+            f"{name}|{version}".lower()
+        ) or entity_by_key.get(name.lower())
+        if entity_id:
+            notes = await self._async_release_notes(entity_id) or ""
+
+        instructions = (
+            "A Home Assistant custom component has a pending update.\n"
+            f"Name: {name}\n"
+            f"Type: {utype}\n"
+            f"Current version: {current}\n"
+            f"New version: {version}\n\n"
+            "Release notes / changelog (may be empty):\n"
+            f"{notes or '(none provided)'}\n\n"
+            "Choose one or more categories that apply, using these labels exactly "
+            "(do not invent new ones): "
+            f"{', '.join(AI_CATEGORY_OPTIONS)}.\n"
+            "Also write one short, plain-language sentence summarising what changed "
+            "for the user. If the notes are sparse, infer conservatively from the "
+            "version change and component name."
+        )
+        structure = {
+            "categories": {
+                "description": "All change categories that apply to this update",
+                "required": True,
+                "selector": {
+                    "select": {"multiple": True, "options": AI_CATEGORY_OPTIONS}
+                },
+            },
+            "summary": {
+                "description": "One short, plain-language sentence on what changed",
+                "required": True,
+                "selector": {"text": {"multiline": True}},
+            },
+        }
+        try:
+            async with asyncio.timeout(AI_CALL_TIMEOUT):
+                resp = await self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    {
+                        "entity_id": ai_entity,
+                        "task_name": "Categorise HACS update",
+                        "instructions": instructions,
+                        "structure": structure,
+                    },
+                    blocking=True,
+                    return_response=True,
+                )
+        except Exception as err:
+            _LOGGER.debug("AI categorisation failed for %s: %s", name, err)
+            return None
+
+        data = (resp or {}).get("data") or {}
+        cats = self._normalise_categories(data.get("categories"))
+        summary = str(data.get("summary") or "").strip()
+        return {"categories": cats, "summary": summary}
+
+    @staticmethod
+    def _normalise_categories(raw: Any) -> list[str]:
+        """Map a model's free-form category output onto the canonical set (#67).
+
+        Models don't reliably honour the select-selector options — they return a
+        list, a single string, or a comma/semicolon/slash-joined string with
+        loose wording. Split it, lower-case it, and map via aliases.
+        """
+        if isinstance(raw, str):
+            parts = re.split(r"[,;/]", raw)
+        elif isinstance(raw, (list, tuple)):
+            parts = []
+            for x in raw:
+                parts.extend(re.split(r"[,;/]", str(x)))
+        else:
+            parts = []
+        canon_by_lower = {c.lower(): c for c in AI_CATEGORY_OPTIONS}
+        out: list[str] = []
+        for part in parts:
+            key = part.strip().lower()
+            if not key:
+                continue
+            canon = canon_by_lower.get(key) or AI_CATEGORY_ALIASES.get(key)
+            if canon and canon not in out:
+                out.append(canon)
+        return out
+
+    async def _async_release_notes(self, entity_id: str) -> str | None:
+        """Fetch release notes from a Home Assistant update entity (#67)."""
+        entity_comp = self.hass.data.get("entity_components", {}).get("update")
+        if entity_comp is None:
+            return None
+        entity = entity_comp.get_entity(entity_id)
+        if entity is None or not hasattr(entity, "async_release_notes"):
+            return None
+        try:
+            return await entity.async_release_notes()
+        except Exception:
+            _LOGGER.debug(
+                "Failed to fetch release notes for %s", entity_id, exc_info=True
+            )
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -1355,10 +1577,11 @@ async def async_setup_entry(
 class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     """A Custom Component Monitor sensor."""
 
-    # Exclude the full component list from the Recorder (it can exceed the
-    # 16 384-byte attribute limit) while keeping it available on the live
-    # entity state so cards and templates can still access it.
-    _unrecorded_attributes = frozenset({ATTR_COMPONENTS})
+    # Exclude large lists from the Recorder (they can exceed the 16 384-byte
+    # attribute limit) while keeping them available on the live entity state so
+    # cards and templates can still access them. ATTR_UPDATES is unrecorded too
+    # because AI summaries (#67) can push the updates list past the limit.
+    _unrecorded_attributes = frozenset({ATTR_COMPONENTS, ATTR_UPDATES})
 
     def __init__(
         self,
