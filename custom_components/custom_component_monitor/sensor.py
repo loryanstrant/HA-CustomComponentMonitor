@@ -1355,15 +1355,18 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("AI categorised %d new update(s)", new_calls)
         return updates
 
-    def _build_update_entity_map(self) -> dict[str, str]:
-        """Map normalised ``name|version`` (and name-only) → HACS update entity.
+    def _build_update_entity_map(self) -> dict[str, dict[str, str]]:
+        """Map HACS ``update.*`` entities by normalised name and by version (#67).
 
-        Mirrors the ``platform == "hacs"`` filter used by ``update_all`` and the
-        card's name/repo matching, so a scanned update can be tied back to its
-        ``update.*`` entity to fetch release notes.
+        Uses the same ``platform == "hacs"`` filter as ``update_all``. Entity
+        titles are unreliable (often ``None``) and ``friendly_name`` carries an
+        " Update" suffix the scanned name lacks, so names are normalised (suffix
+        stripped, lower-cased, punctuation removed) — mirroring the card. A
+        version map is kept as a fallback when names don't line up.
         """
         registry = er.async_get(self.hass)
-        mapping: dict[str, str] = {}
+        by_name: dict[str, str] = {}
+        by_version: dict[str, str] = {}
         for state in self.hass.states.async_all("update"):
             entry = registry.async_get(state.entity_id)
             if entry is None or entry.platform != "hacs":
@@ -1373,18 +1376,30 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 or state.attributes.get("friendly_name")
                 or ""
             )
-            latest = state.attributes.get("latest_version", "") or ""
-            if not title:
-                continue
-            mapping.setdefault(f"{title}|{latest}".lower(), state.entity_id)
-            mapping.setdefault(title.lower(), state.entity_id)
-        return mapping
+            norm = self._norm_name(title)
+            if norm:
+                by_name.setdefault(norm, state.entity_id)
+            latest = self._norm_version(state.attributes.get("latest_version"))
+            if latest:
+                by_version.setdefault(latest, state.entity_id)
+        return {"by_name": by_name, "by_version": by_version}
+
+    @staticmethod
+    def _norm_name(value: Any) -> str:
+        """Normalise an update name for matching (drop ' update', punctuation)."""
+        text = re.sub(r"\s+update$", "", str(value or ""), flags=re.IGNORECASE)
+        return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+    @staticmethod
+    def _norm_version(value: Any) -> str:
+        """Normalise a version string (strip a leading 'v', lower-case)."""
+        return re.sub(r"^v", "", str(value or "").strip().lower())
 
     async def _async_categorise_one(
         self,
         item: dict[str, Any],
         ai_entity: str,
-        entity_by_key: dict[str, str],
+        entity_by_key: dict[str, dict[str, str]],
     ) -> dict[str, Any] | None:
         """Run a single update through the AI Task; return categories+summary."""
         name = item.get("name", "")
@@ -1392,11 +1407,12 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current = item.get("current_version", "")
         utype = item.get("type", "")
 
-        # Best-effort release notes from the matching update entity.
+        # Best-effort release notes from the matching update entity: by
+        # normalised name, falling back to the available version.
         notes = ""
-        entity_id = entity_by_key.get(
-            f"{name}|{version}".lower()
-        ) or entity_by_key.get(name.lower())
+        entity_id = entity_by_key["by_name"].get(
+            self._norm_name(name)
+        ) or entity_by_key["by_version"].get(self._norm_version(version))
         if entity_id:
             notes = await self._async_release_notes(entity_id) or ""
 
