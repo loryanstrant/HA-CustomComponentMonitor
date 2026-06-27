@@ -1416,6 +1416,30 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "If the notes are sparse, infer conservatively from the version change "
             "and component name."
         )
+        json_suffix = (
+            "\n\nRespond with ONLY a JSON object, no prose, exactly:\n"
+            '{"categories": ["..."], "summary": "..."}'
+        )
+        last_err: Exception | None = None
+
+        # Conversation-agent source (#67): a single text call, then parse JSON
+        # from the reply. This avoids the ai_task structured/streaming path,
+        # which some provider bridges mishandle for certain models.
+        if ai_entity.startswith("conversation."):
+            try:
+                parsed = self._parse_ai_text(
+                    await self._async_conversation_call(ai_entity, base + json_suffix)
+                )
+                if parsed is not None:
+                    self._ai_last_error = None
+                    return parsed
+            except Exception as err:
+                last_err = err
+            self._note_ai_error(name, last_err)
+            return None
+
+        # AI Task source. 1) Preferred: structured output (works where the
+        # provider supports strict JSON schema, e.g. official OpenAI/Ollama).
         structure = {
             "categories": {
                 "description": "All change categories that apply to this update",
@@ -1430,10 +1454,6 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "selector": {"text": {"multiline": True}},
             },
         }
-
-        # 1) Preferred path: structured output (works where the provider supports
-        #    strict JSON schema, e.g. official OpenAI/Ollama and capable models).
-        last_err: Exception | None = None
         try:
             parsed = self._parse_ai_data(
                 await self._async_ai_call(ai_entity, base, structure)
@@ -1444,16 +1464,12 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:  # provider/model/transport failure
             last_err = err
 
-        # 2) Fallback: plain text + an explicit JSON request, then parse it. This
-        #    rescues backends that can't do strict structured output but can still
-        #    generate text (a large class of self-hosted setups).
-        text_instructions = base + (
-            "\n\nRespond with ONLY a JSON object, no prose, exactly:\n"
-            '{"categories": ["..."], "summary": "..."}'
-        )
+        # 2) Fallback: plain text + an explicit JSON request, then parse it.
+        #    Rescues backends that can't do strict structured output but can
+        #    still generate text (a large class of self-hosted setups).
         try:
             parsed = self._parse_ai_text(
-                await self._async_ai_call(ai_entity, text_instructions, None)
+                await self._async_ai_call(ai_entity, base + json_suffix, None)
             )
             if parsed is not None:
                 self._ai_last_error = None
@@ -1463,6 +1479,26 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._note_ai_error(name, last_err)
         return None
+
+    async def _async_conversation_call(self, agent_id: str, text: str) -> str | None:
+        """Call conversation.process and return the agent's reply text (#67)."""
+        async with asyncio.timeout(AI_CALL_TIMEOUT):
+            resp = await self.hass.services.async_call(
+                "conversation",
+                "process",
+                {"agent_id": agent_id, "text": text},
+                blocking=True,
+                return_response=True,
+            )
+        response = (resp or {}).get("response") or {}
+        speech = (
+            (response.get("speech") or {}).get("plain") or {}
+        ).get("speech")
+        # conversation.process returns HTTP 200 even on failure, with the error
+        # in the reply — surface it so categorisation degrades + warns cleanly.
+        if response.get("response_type") == "error":
+            raise RuntimeError(speech or "conversation agent error")
+        return speech
 
     async def _async_ai_call(
         self, ai_entity: str, instructions: str, structure: dict | None
