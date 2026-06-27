@@ -21,6 +21,8 @@ From v1.3.0, it also includes the former **HACS Update Action Tracker** function
 - a persistent `todo.hacs_update_actions` to-do list
 - the `custom_component_monitor.update_and_action` service
 
+From v1.10.0, the Update Action Tracker can optionally use AI to **summarise and categorise** each pending update (see [AI update summaries & categories](#ai-update-summaries--categories)).
+
 ## Screenshots
 
 ### Custom Component Monitor card
@@ -51,6 +53,22 @@ Screenshots below are from the original Update Action Tracker repository and sho
 
 <img width="564" alt="HACS update action to-do item details with release notes" src="docs/images/update-action-todo-details.png" />
 
+### AI update summaries & categories
+
+When AI categorisation is enabled (v1.10.0+), each pending update gains category badges, and the card offers category filtering and a sort-by-category toggle. Expanding a row shows a one-line AI summary above the release notes.
+
+**Category badges, filter, and sort**
+
+<img width="440" alt="HACS Update Action Tracker card with AI category badges, category filter chips, and a sort toggle" src="docs/images/update-tracker-ai-overview.png" />
+
+**Expanded row with AI summary**
+
+<img width="440" alt="Expanded update row showing the AI summary above the release notes" src="docs/images/update-tracker-ai-expanded.png" />
+
+**Enabling it in the integration options**
+
+<img width="520" alt="Custom Component Monitor options dialog showing the AI categorisation toggle and AI entity picker" src="docs/images/options-ai-categorisation.png" />
+
 ## Features
 
 ### Custom Component Monitor
@@ -61,6 +79,7 @@ Screenshots below are from the original Update Action Tracker repository and sho
   - **Themes**: Scans Lovelace dashboard configs and HA theme settings for active themes
   - **Frontend Cards**: Matches `custom:` card types in dashboards against installed HACS plugins
 - 🔔 **HACS Update Count**: `sensor.hacs_updates` reports how many HACS components have a pending update — ideal for conditional cards and automations
+- 📈 **Long-term Statistics**: from v1.9.0 the count sensors declare `state_class: measurement` and a unit, so History renders them as proper graphs and Home Assistant keeps long-term statistics
 - 🃏 **Dashboard Card**: Built-in Lovelace card with collapsible sections (optionally collapsed by default), an icon-based sort toggle, and section filtering
 - 🧮 **Section-aware Summary Totals**: Installed, used, and unused counts are calculated from the selected card sections
 - 🏷️ **Repository Links**: Direct links to each component's repository
@@ -75,6 +94,8 @@ Screenshots below are from the original Update Action Tracker repository and sho
 - 🔗 **Release Links**: Links to the GitHub release page when provided by the update entity
 - 🔄 **Real-time Progress Tracking**: Shows installation progress and disables action buttons during active updates
 - ✅ **Todo List Integration**: Update & Action installs the update and creates a to-do item with release notes
+- 🤖 **AI Summaries & Categories (optional)**: Use a Home Assistant AI Task entity *or* a Conversation agent to label each pending update (Bug fixes, New features, Documentation, Translations, Breaking changes, Dependencies, Other) and write a one-line summary
+- 🏷️ **Category Badges, Filter & Sort**: Filter the card by category and sort by category; badges are text labels (readable without relying on colour)
 - 🎨 **Polished UI**: Includes a visual editor for the update card title and matches your Home Assistant theme
 
 ## Installation
@@ -257,6 +278,8 @@ title: HACS Update Tracker
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `title` | string | `HACS Update Tracker` | Card title |
+| `default_filter` | string | `all` | Initial component-type filter: `integration`, `card`, `theme`, or `other` |
+| `default_category_filter` | string | `all` | Initial AI-category filter (e.g. `Bug fixes`); only applies when AI categorisation is enabled |
 
 #### Card Features
 
@@ -267,6 +290,23 @@ title: HACS Update Tracker
 - Displays a pending count badge, or **Up to date** when clear
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing
+- Filter chips by component type, and (when AI categorisation is enabled) by category, plus a sort-by-category toggle
+
+#### AI summaries & categories
+
+The Update Action Tracker can optionally run each pending update through AI to produce a one-line summary and one or more category tags.
+
+**Enable it** in **Settings → Devices & services → Custom Component Monitor → Configure**:
+
+1. Turn on **Summarise & categorise updates with AI**.
+2. Choose an **AI entity** — either an [AI Task](https://www.home-assistant.io/integrations/ai_task/) entity (Home Assistant 2025.7+) **or** a Conversation agent. If one doesn't work for your model, try the other.
+
+Notes:
+
+- Categories are drawn from a fixed set: Bug fixes, New features, Documentation, Translations, Breaking changes, Dependencies, Other (an update can have several).
+- Results are **cached per component + version**, so the hourly scan only calls the AI for new or changed updates.
+- It degrades gracefully: if the AI backend can't return a usable result, the scan still completes and those updates simply show no categories (a warning in the log explains why). Failed updates aren't cached, so they're retried on the next scan.
+- Compatibility depends on the AI backend. In testing, an AI Task entity worked well with capable models (e.g. qwen) and cloud providers; some self-hosted models work better via a **Conversation agent**. The official OpenAI, Ollama, Anthropic, and Google Generative AI providers are good choices.
 
 ### Recently Installed but Unused Card
 
