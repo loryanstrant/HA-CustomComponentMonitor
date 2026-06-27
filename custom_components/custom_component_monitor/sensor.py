@@ -1201,6 +1201,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.scanner = ComponentScanner(hass)
         self.entry = entry
         self._ai_store: Store | None = None
+        self._ai_last_error: str | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -1399,7 +1400,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if entity_id:
             notes = await self._async_release_notes(entity_id) or ""
 
-        instructions = (
+        base = (
             "A Home Assistant custom component has a pending update.\n"
             f"Name: {name}\n"
             f"Type: {utype}\n"
@@ -1407,12 +1408,13 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"New version: {version}\n\n"
             "Release notes / changelog (may be empty):\n"
             f"{notes or '(none provided)'}\n\n"
+            "Classify what this update contains and summarise it for the user.\n"
             "Choose one or more categories that apply, using these labels exactly "
             "(do not invent new ones): "
             f"{', '.join(AI_CATEGORY_OPTIONS)}.\n"
-            "Also write one short, plain-language sentence summarising what changed "
-            "for the user. If the notes are sparse, infer conservatively from the "
-            "version change and component name."
+            "Write one short, plain-language sentence summarising what changed. "
+            "If the notes are sparse, infer conservatively from the version change "
+            "and component name."
         )
         structure = {
             "categories": {
@@ -1428,28 +1430,111 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "selector": {"text": {"multiline": True}},
             },
         }
-        try:
-            async with asyncio.timeout(AI_CALL_TIMEOUT):
-                resp = await self.hass.services.async_call(
-                    "ai_task",
-                    "generate_data",
-                    {
-                        "entity_id": ai_entity,
-                        "task_name": "Categorise HACS update",
-                        "instructions": instructions,
-                        "structure": structure,
-                    },
-                    blocking=True,
-                    return_response=True,
-                )
-        except Exception as err:
-            _LOGGER.debug("AI categorisation failed for %s: %s", name, err)
-            return None
 
-        data = (resp or {}).get("data") or {}
+        # 1) Preferred path: structured output (works where the provider supports
+        #    strict JSON schema, e.g. official OpenAI/Ollama and capable models).
+        last_err: Exception | None = None
+        try:
+            parsed = self._parse_ai_data(
+                await self._async_ai_call(ai_entity, base, structure)
+            )
+            if parsed is not None:
+                self._ai_last_error = None
+                return parsed
+        except Exception as err:  # provider/model/transport failure
+            last_err = err
+
+        # 2) Fallback: plain text + an explicit JSON request, then parse it. This
+        #    rescues backends that can't do strict structured output but can still
+        #    generate text (a large class of self-hosted setups).
+        text_instructions = base + (
+            "\n\nRespond with ONLY a JSON object, no prose, exactly:\n"
+            '{"categories": ["..."], "summary": "..."}'
+        )
+        try:
+            parsed = self._parse_ai_text(
+                await self._async_ai_call(ai_entity, text_instructions, None)
+            )
+            if parsed is not None:
+                self._ai_last_error = None
+                return parsed
+        except Exception as err:
+            last_err = err
+
+        self._note_ai_error(name, last_err)
+        return None
+
+    async def _async_ai_call(
+        self, ai_entity: str, instructions: str, structure: dict | None
+    ) -> Any:
+        """Call ai_task.generate_data and return its response 'data' (#67)."""
+        service_data: dict[str, Any] = {
+            "entity_id": ai_entity,
+            "task_name": "Categorise HACS update",
+            "instructions": instructions,
+        }
+        if structure is not None:
+            service_data["structure"] = structure
+        async with asyncio.timeout(AI_CALL_TIMEOUT):
+            resp = await self.hass.services.async_call(
+                "ai_task",
+                "generate_data",
+                service_data,
+                blocking=True,
+                return_response=True,
+            )
+        return (resp or {}).get("data")
+
+    def _parse_ai_data(self, data: Any) -> dict[str, Any] | None:
+        """Parse a structured ai_task result (dict, or a JSON string)."""
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (ValueError, TypeError):
+                return None
+        if not isinstance(data, dict):
+            return None
         cats = self._normalise_categories(data.get("categories"))
         summary = str(data.get("summary") or "").strip()
+        if not cats and not summary:
+            return None
         return {"categories": cats, "summary": summary}
+
+    def _parse_ai_text(self, text: Any) -> dict[str, Any] | None:
+        """Parse a plain-text ai_task result, extracting an embedded JSON object."""
+        if not isinstance(text, str) or not text.strip():
+            return None
+        match = re.search(r"\{.*\}", text, re.S)
+        if match:
+            try:
+                obj = json.loads(match.group(0))
+                if isinstance(obj, dict):
+                    cats = self._normalise_categories(obj.get("categories"))
+                    summary = str(obj.get("summary") or "").strip()
+                    if cats or summary:
+                        return {"categories": cats, "summary": summary}
+            except (ValueError, TypeError):
+                pass
+        # No usable JSON — keep the first line as a summary, no categories.
+        summary = text.strip().splitlines()[0][:300]
+        return {"categories": [], "summary": summary} if summary else None
+
+    def _note_ai_error(self, name: str, err: Exception | None) -> None:
+        """Log a deduped, actionable warning when categorisation fails (#67)."""
+        msg = str(err) if err else "no usable response"
+        _LOGGER.debug("AI categorisation failed for %s: %s", name, msg)
+        if msg != self._ai_last_error:
+            self._ai_last_error = msg
+            ent = self.entry.options.get(CONF_AI_TASK_ENTITY) if self.entry else "?"
+            _LOGGER.warning(
+                "AI categorisation via '%s' failed (%s). Pending updates will show "
+                "no categories. If this persists, your AI Task provider/model may "
+                "not support structured or JSON generation — the official OpenAI, "
+                "Ollama, Anthropic or Google Generative AI integrations are "
+                "recommended as the AI Task backend.",
+                ent,
+                msg,
+            )
 
     @staticmethod
     def _normalise_categories(raw: Any) -> list[str]:
