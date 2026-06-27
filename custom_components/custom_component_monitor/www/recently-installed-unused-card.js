@@ -5,7 +5,7 @@
  * forgot to wire it up" view. It reads the same unused_* sensors as the main
  * Custom Component Monitor card and filters each unused list by days_installed.
  */
-var CARD_VERSION = "1.10.0";
+var CARD_VERSION = "1.11.0";
 
 var RIU_ALL_SECTIONS = ["integrations", "themes", "frontend"];
 var RIU_DEFAULT_WINDOW = 30;

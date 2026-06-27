@@ -236,6 +236,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_update_all(call: ServiceCall) -> None:
             create_actions: bool = call.data.get("create_actions", False)
+            # Optional subset: only update these update entities (the card passes
+            # the currently-filtered set for "Update selected"). Empty = all.
+            selected: set[str] = set(call.data.get("entity_ids", []) or [])
             registry = er.async_get(hass)
 
             targets: list[str] = []
@@ -244,13 +247,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     continue
                 if state.attributes.get("in_progress"):
                     continue
+                if selected and state.entity_id not in selected:
+                    continue
                 entry_re = registry.async_get(state.entity_id)
                 if entry_re is None or entry_re.platform != "hacs":
                     continue
                 targets.append(state.entity_id)
 
             _LOGGER.info(
-                "update_all: %d HACS component(s) with available updates", len(targets)
+                "update_all: %d HACS component(s) with available updates%s",
+                len(targets),
+                " (selected subset)" if selected else "",
             )
             for entity_id in targets:
                 try:
@@ -275,7 +282,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN,
             SERVICE_UPDATE_ALL,
             handle_update_all,
-            schema=vol.Schema({vol.Optional("create_actions", default=False): cv.boolean}),
+            schema=vol.Schema(
+                {
+                    vol.Optional("create_actions", default=False): cv.boolean,
+                    vol.Optional("entity_ids", default=[]): cv.ensure_list,
+                }
+            ),
         )
 
     return True
