@@ -132,7 +132,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_AI_TASK_ENTITY,
                     description={"suggested_value": current_ai_entity or None},
                 ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="ai_task")
+                    selector.EntitySelectorConfig(domain=["ai_task", "conversation"])
                 ),
             }
         )
