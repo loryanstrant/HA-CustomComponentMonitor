@@ -69,6 +69,12 @@ When AI categorisation is enabled (v1.10.0+), each pending update gains category
 
 <img width="520" alt="Custom Component Monitor options dialog showing the AI categorisation toggle and AI entity picker" src="docs/images/options-ai-categorisation.png" />
 
+### Update selected
+
+When you filter the list (by component type or AI category), the bulk button becomes **"Update selected (N)"** and installs only the visible updates — e.g. filter to **Cards** and update just those, leaving integrations (which need a restart) for later. With no filter active it stays **"Update all (N)"**.
+
+<img width="440" alt="HACS Update Action Tracker filtered to Cards, with an Update selected (2) button" src="docs/images/update-tracker-update-selected.png" />
+
 ## Features
 
 ### Custom Component Monitor
@@ -89,7 +95,7 @@ When AI categorisation is enabled (v1.10.0+), each pending update gains category
 ### HACS Update Action Tracker
 
 - 📋 **Smart Update Card**: Lists pending HACS integration updates with Skip, Update, and Update & Action buttons
-- 🚀 **Update All**: One button (and a service) to install every pending HACS update in a single action
+- 🚀 **Update All / Update Selected**: One button to install every pending HACS update — or, when the list is filtered (by component type or AI category), just the visible ones (e.g. update all Cards without touching integrations that need a restart). Also exposed as the `update_all` service with an optional `entity_ids` subset
 - 📝 **Expandable Release Notes**: Fetches release notes directly from Home Assistant update entities
 - 🔗 **Release Links**: Links to the GitHub release page when provided by the update entity
 - 🔄 **Real-time Progress Tracking**: Shows installation progress and disables action buttons during active updates
@@ -286,7 +292,7 @@ title: HACS Update Tracker
 - Lists pending HACS integration updates
 - Shows component icon, current version, and available version
 - Provides **Skip**, **Update**, and **Update & Action** buttons
-- Offers an **Update all (N)** button to install every pending update at once (with a confirmation)
+- Offers a context-aware bulk button (with a confirmation): **Update all (N)** normally, or **Update selected (N)** when the list is filtered — installing only the visible updates, so you can update no-restart items (Cards/Themes) without touching integrations
 - Displays a pending count badge, or **Up to date** when clear
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing
