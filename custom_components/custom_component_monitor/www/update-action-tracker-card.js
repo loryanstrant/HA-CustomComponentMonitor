@@ -2,10 +2,10 @@
  * Update Action Tracker Card
  * Lists HACS integrations with pending updates and provides
  * Skip, Update, and Update & Action buttons.
- * v1.10.0
+ * v1.11.0
  */
 
-const CARD_VERSION = "1.10.0";
+const CARD_VERSION = "1.11.0";
 const UAT_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -74,6 +74,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     this._typeFilter = "all"; // #69: filter updates by component type
     this._categoryFilter = "all"; // #67: filter by AI category
     this._categorySort = false; // #67: sort by AI category
+    this._shownEntities = []; // currently-visible set, for "Update selected"
   }
 
   /* -- Lovelace lifecycle ------------------------------------- */
@@ -347,20 +348,25 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   async _handleUpdateAll() {
-    const entities = await this._getHacsUpdateEntities();
-    if (!entities.length) return;
-    if (!window.confirm(
-      "Install all " + entities.length + " available HACS update" +
-      (entities.length > 1 ? "s" : "") + " now?"
-    )) return;
-    // Mark each row in progress for immediate feedback.
-    entities.forEach((eid) => { this._actionInProgress[eid] = "update"; });
+    // Act on the currently-visible (filtered) set captured during render.
+    const targets = (this._shownEntities || []).slice();
+    if (!targets.length) return;
+    const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
+    const noun = "update" + (targets.length > 1 ? "s" : "");
+    const msg = filtered
+      ? "Install the " + targets.length + " selected HACS " + noun + " now?"
+      : "Install all " + targets.length + " available HACS " + noun + " now?";
+    if (!window.confirm(msg)) return;
+    // Mark each target in progress for immediate feedback.
+    targets.forEach((eid) => { this._actionInProgress[eid] = "update"; });
     this._doRender();
     this._manageProgressPoll();
     try {
-      await this._hass.callService(UAT_DOMAIN, "update_all", {});
+      // Pass the explicit subset when filtered; otherwise let the service update all.
+      const data = filtered ? { entity_ids: targets } : {};
+      await this._hass.callService(UAT_DOMAIN, "update_all", data);
     } catch (_err) {
-      entities.forEach((eid) => { delete this._actionInProgress[eid]; });
+      targets.forEach((eid) => { delete this._actionInProgress[eid]; });
       this._doRender();
     }
   }
@@ -447,6 +453,10 @@ class UpdateActionTrackerCard extends HTMLElement {
       });
     }
 
+    // Remember the currently-visible (filtered) set so "Update selected" acts on it.
+    this._shownEntities = shown;
+    const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
+
     let contentHtml;
     if (entities.length === 0) {
       contentHtml = '<div class="empty"><ha-icon icon="mdi:check-circle-outline"></ha-icon><span>All HACS integrations are up to date!</span></div>';
@@ -508,10 +518,13 @@ class UpdateActionTrackerCard extends HTMLElement {
       '</div>' +
       filtersHtml +
       catFiltersHtml +
-      (entities.length > 0
+      (shown.length > 0
         ? '<div class="update-all-bar">' +
           '<button class="btn btn-update-all" data-action="update-all">' +
-          'Update all (' + entities.length + ')</button></div>'
+          (filtered
+            ? 'Update selected (' + shown.length + ')'
+            : 'Update all (' + entities.length + ')') +
+          '</button></div>'
         : '') +
       '<div class="items">' + contentHtml + '</div>' +
       '</ha-card>';
