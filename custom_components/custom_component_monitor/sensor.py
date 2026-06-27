@@ -33,7 +33,6 @@ from .const import (
     AI_CALL_TIMEOUT,
     AI_CATEGORY_ALIASES,
     AI_CATEGORY_OPTIONS,
-    AI_MAX_PER_SCAN,
     ATTR_CATEGORIES,
     ATTR_COMPONENTS,
     ATTR_EXCLUDED_COMPONENTS,
@@ -1331,13 +1330,6 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 item[ATTR_CATEGORIES] = cached.get("categories", [])
                 item[ATTR_SUMMARY] = cached.get("summary", "")
                 continue
-            if new_calls >= AI_MAX_PER_SCAN:
-                _LOGGER.debug(
-                    "AI categorisation cap (%d) reached; deferring %s",
-                    AI_MAX_PER_SCAN,
-                    key,
-                )
-                continue
             result = await self._async_categorise_one(item, ai_entity, entity_by_key)
             if result is not None:
                 item[ATTR_CATEGORIES] = result.get("categories", [])
@@ -1395,6 +1387,44 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Normalise a version string (strip a leading 'v', lower-case)."""
         return re.sub(r"^v", "", str(value or "").strip().lower())
 
+    @staticmethod
+    def _finalise(parsed: dict[str, Any], note_cats: list[str]) -> dict[str, Any]:
+        """Union the AI's categories with those detected from the notes (#67)."""
+        cats = list(parsed.get("categories") or [])
+        for cat in note_cats:
+            if cat not in cats:
+                cats.append(cat)
+        # "Other" is a catch-all — drop it when a specific category applies.
+        if len(cats) > 1 and "Other" in cats:
+            cats = [c for c in cats if c != "Other"]
+        return {"categories": cats, "summary": parsed.get("summary", "")}
+
+    @staticmethod
+    def _categories_from_notes(notes: str) -> list[str]:
+        """Derive categories from changelog section headers / commit prefixes (#67).
+
+        Conventional-commit / release-please changelogs use stable section
+        headers, so categories can be detected deterministically rather than
+        relying on the model alone (which may miss a section). These are unioned
+        with the model's categories.
+        """
+        if not notes:
+            return []
+        text = notes.lower()
+        checks = [
+            ("Bug fixes", r"#{1,6}\s*bug\s*fixes|(^|\n)\s*[*-]?\s*fix(\(|:)|\bbug ?fix(es)?\b"),
+            ("New features", r"#{1,6}\s*features?|(^|\n)\s*[*-]?\s*feat(\(|:)"),
+            ("Documentation", r"#{1,6}\s*(documentation|docs)\b|(^|\n)\s*[*-]?\s*docs(\(|:)"),
+            ("Breaking changes", r"breaking[\s_-]?change|#{1,6}\s*breaking"),
+            ("Dependencies", r"#{1,6}\s*dependenc|build\(deps|chore\(deps|(^|\n)\s*[*-]?\s*deps(\(|:)|\bbump\b.*\bfrom\b"),
+            ("Translations", r"#{1,6}\s*(translation|i18n)|\bi18n\b|locali[sz]ation|\btranslations?\b"),
+        ]
+        found: list[str] = []
+        for cat, pattern in checks:
+            if cat not in found and re.search(pattern, text, re.MULTILINE):
+                found.append(cat)
+        return found
+
     async def _async_categorise_one(
         self,
         item: dict[str, Any],
@@ -1415,6 +1445,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ) or entity_by_key["by_version"].get(self._norm_version(version))
         if entity_id:
             notes = await self._async_release_notes(entity_id) or ""
+        note_cats = self._categories_from_notes(notes)
 
         base = (
             "A Home Assistant custom component has a pending update.\n"
@@ -1424,13 +1455,15 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"New version: {version}\n\n"
             "Release notes / changelog (may be empty):\n"
             f"{notes or '(none provided)'}\n\n"
-            "Classify what this update contains and summarise it for the user.\n"
-            "Choose one or more categories that apply, using these labels exactly "
-            "(do not invent new ones): "
-            f"{', '.join(AI_CATEGORY_OPTIONS)}.\n"
-            "Write one short, plain-language sentence summarising what changed. "
-            "If the notes are sparse, infer conservatively from the version change "
-            "and component name."
+            "The notes may cover several releases and contain sections such as "
+            "Features, Bug Fixes, Documentation, Dependencies or Breaking Changes.\n"
+            "Choose the categories clearly supported by the notes, using these "
+            "labels exactly (do not invent new ones): "
+            f"{', '.join(AI_CATEGORY_OPTIONS)}. "
+            "Use 'Other' only when no specific category fits.\n"
+            "Then write one short, plain-language sentence summarising the headline "
+            "changes. If the notes are sparse, infer conservatively from the version "
+            "change and component name."
         )
         json_suffix = (
             "\n\nRespond with ONLY a JSON object, no prose, exactly:\n"
@@ -1448,7 +1481,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 if parsed is not None:
                     self._ai_last_error = None
-                    return parsed
+                    return self._finalise(parsed, note_cats)
             except Exception as err:
                 last_err = err
             self._note_ai_error(name, last_err)
@@ -1476,7 +1509,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if parsed is not None:
                 self._ai_last_error = None
-                return parsed
+                return self._finalise(parsed, note_cats)
         except Exception as err:  # provider/model/transport failure
             last_err = err
 
@@ -1489,7 +1522,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if parsed is not None:
                 self._ai_last_error = None
-                return parsed
+                return self._finalise(parsed, note_cats)
         except Exception as err:
             last_err = err
 
