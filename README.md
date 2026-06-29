@@ -1,7 +1,14 @@
 # Home Assistant Custom Component Monitor
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![GitHub release](https://img.shields.io/github/release/loryanstrant/HA-CustomComponentMonitor.svg)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases/)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5?style=flat-square)](https://github.com/hacs/integration)
+[![Release](https://img.shields.io/github/v/release/loryanstrant/HA-CustomComponentMonitor?style=flat-square)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases)
+[![Release date](https://img.shields.io/github/release-date/loryanstrant/HA-CustomComponentMonitor?style=flat-square)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases)
+[![Downloads](https://img.shields.io/github/downloads/loryanstrant/HA-CustomComponentMonitor/total?style=flat-square)](https://github.com/loryanstrant/HA-CustomComponentMonitor/releases)
+[![License](https://img.shields.io/github/license/loryanstrant/HA-CustomComponentMonitor?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/loryanstrant/HA-CustomComponentMonitor?style=flat-square)](https://github.com/loryanstrant/HA-CustomComponentMonitor/commits)
+[![Stars](https://img.shields.io/github/stars/loryanstrant/HA-CustomComponentMonitor?style=flat-square)](https://github.com/loryanstrant/HA-CustomComponentMonitor/stargazers)
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=loryanstrant&repository=HA-CustomComponentMonitor&category=integration)
 
 A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.
 
