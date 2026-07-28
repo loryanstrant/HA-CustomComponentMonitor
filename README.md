@@ -107,7 +107,8 @@ When you filter the list (by component type or AI category), the bulk button bec
 - 🔗 **Release Links**: Links to the GitHub release page when provided by the update entity
 - 🔄 **Real-time Progress Tracking**: Shows installation progress and disables action buttons during active updates
 - ✅ **Todo List Integration**: Update & Action installs the update and creates a to-do item with release notes
-- 🤖 **AI Summaries & Categories (optional)**: Use a Home Assistant AI Task entity *or* a Conversation agent to label each pending update (Bug fixes, New features, Documentation, Translations, Breaking changes, Dependencies, Other) and write a one-line summary
+- 🤖 **AI Summaries & Categories (optional)**: Use a Home Assistant AI Task entity *or* a Conversation agent to label each pending update (Bug fixes, New features, Documentation, Translations, Breaking changes, Dependencies, Other) and write a one-line summary. Generation runs in the background and only ever touches updates that don't already have a summary
+- ✨ **Generate Summaries Button**: A card button (and the `generate_summaries` service) to fill in any missing AI summaries on demand, without waiting for the next hourly scan
 - 🏷️ **Category Badges, Filter & Sort**: Filter the card by category and sort by category; badges are text labels (readable without relying on colour)
 - 🎨 **Polished UI**: Includes a visual editor for the update card title and matches your Home Assistant theme
 
@@ -165,7 +166,12 @@ Each unused sensor provides:
 
 The `sensor.hacs_updates` sensor provides:
 
-- `updates` — list of components with a pending update, each with `name`, `type`, `repository`, `current_version`, and `available_version`
+- `updates` — list of components with a pending update, each with `name`, `type`, `repository`, `current_version`, `available_version`, and `entity_id` (the matching HACS `update.*` entity, when one is known)
+- `ai_enabled` — whether AI summaries are switched on and pointed at an entity
+- `ai_pending` — how many pending updates are still missing an AI summary
+- `ai_in_progress` — `true` while a summary generation run is under way
+- `ai_last_error` — the last AI failure message, or `null` when the last run was clean
+- `ai_last_run` — timestamp of the last generation run
 
 Because its state is a simple count, you can show a card or trigger an automation only when updates exist — for example with a conditional card on `sensor.hacs_updates` being above `0`, mirroring how you might gate the unused-components card on the unused sensors.
 
@@ -314,11 +320,14 @@ The Update Action Tracker can optionally run each pending update through AI to p
 1. Turn on **Summarise & categorise updates with AI**.
 2. Choose an **AI entity** — either an [AI Task](https://www.home-assistant.io/integrations/ai_task/) entity (Home Assistant 2025.7+) **or** a Conversation agent. If one doesn't work for your model, try the other.
 
+Once enabled, a **Generate summaries (N)** button appears on the card whenever any visible update is still missing a summary. It calls [`custom_component_monitor.generate_summaries`](#custom_component_monitorgenerate_summaries) for exactly those updates and fills them in one by one as the model responds.
+
 Notes:
 
 - Categories are drawn from a fixed set: Bug fixes, New features, Documentation, Translations, Breaking changes, Dependencies, Other (an update can have several).
-- Results are **cached per component + version**, so the hourly scan only calls the AI for new or changed updates.
-- It degrades gracefully: if the AI backend can't return a usable result, the scan still completes and those updates simply show no categories (a warning in the log explains why). Failed updates aren't cached, so they're retried on the next scan.
+- Generation runs **in the background**, never during startup, so a slow model can't hold up Home Assistant. Each result is saved as it arrives, so a restart part-way through keeps whatever was already generated.
+- Results are **cached per repository + target version**, and **only updates without a summary are ever sent to the AI**. A cached summary is never regenerated unless you ask for it with `force`.
+- It degrades gracefully: if the AI backend can't return a usable result, the scan still completes and those updates simply show no summary (a warning in the log explains why). Failures are recorded and retried with a growing backoff — 15 minutes, 1 hour, 6 hours, then daily, stopping after 5 attempts. The **Generate summaries** button and `force: true` always retry regardless.
 - Compatibility depends on the AI backend. In testing, an AI Task entity worked well with capable models (e.g. qwen) and cloud providers; some self-hosted models work better via a **Conversation agent**. The official OpenAI, Ollama, Anthropic, and Google Generative AI providers are good choices.
 
 ### Recently Installed but Unused Card
@@ -392,6 +401,7 @@ Installs **every** pending HACS update in one call. It walks all `update` entiti
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `create_actions` | No | When `true`, each update is installed via `update_and_action` so a follow-up to-do item is created per component (default `false`) |
+| `entity_ids` | No | Only update these update entities. If omitted, every pending HACS update is installed. The card's **Update selected** passes the currently-filtered set here |
 
 Example service call:
 
@@ -399,6 +409,34 @@ Example service call:
 service: custom_component_monitor.update_all
 data:
   create_actions: true
+```
+
+### `custom_component_monitor.generate_summaries`
+
+Generates the missing [AI summaries and categories](#ai-summaries--categories) for pending HACS updates. **Only updates that don't already have a summary are sent to the AI**, unless `force` is set — so calling it repeatedly is safe and costs nothing once every update is summarised.
+
+Requires AI summaries to be enabled in the integration options; calling it otherwise raises an error rather than doing nothing silently.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `entity_ids` | No | Only summarise these `update.*` entities. If omitted, every pending update missing a summary is processed. The card's **Generate summaries** button passes the currently-shown set here |
+| `force` | No | Regenerate even when a summary already exists, and ignore the retry backoff after previous failures. Costs one AI call per update (default `false`) |
+| `max_items` | No | Stop after this many AI calls. Omit for no limit |
+
+The service returns a response with the counts, so an automation can act on the outcome:
+
+```yaml
+action: custom_component_monitor.generate_summaries
+response_variable: result
+# result -> {"generated": 3, "failed": 0, "skipped": 12, "remaining": 0}
+```
+
+Example service call:
+
+```yaml
+service: custom_component_monitor.generate_summaries
+data:
+  max_items: 5
 ```
 
 ## Migration from HACS Update Action Tracker
@@ -437,6 +475,8 @@ Derives expected `custom:` card type names from HACS plugin JS filenames, then s
 ### HACS Updates
 
 `sensor.hacs_updates` counts HACS-installed components that have a pending update. A component is treated as having an update when its installed release version differs from the latest available version — or, for components that track a branch instead of releases, when the installed commit differs from the latest commit. The `updates` attribute lists each pending update with its current and available version, so a card or automation can react whenever the count rises above zero.
+
+That comes from HACS's stored repository data, which is a snapshot written periodically and can lag reality in both directions — missing an update HACS has already surfaced, or still listing one you installed hours ago. The scan therefore **reconciles it against the live HACS `update.*` entities**, which are authoritative: an update only the entities know about is added (and can now get an AI summary), and a row the entity says is already installed or skipped is dropped. The card and the sensor consequently always describe the same set of updates.
 
 The update card looks for pending `update.*` entities provided by HACS. For **Update & Action**, it calls Home Assistant's `update.install` service and then creates a persistent item in `todo.hacs_update_actions` with release context and release notes when available.
 

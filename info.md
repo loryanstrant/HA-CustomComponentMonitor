@@ -9,6 +9,7 @@ Monitor your HACS installation for unused custom components — with a built-in 
 - **Smart Detection**: Checks config entries, Lovelace dashboards, and theme settings to determine actual usage
 - **Repository Links**: Direct links to each component's repository
 - **Installation Tracking**: Shows how long each component has been installed
+- **HACS Update Tracker**: A second card listing pending HACS updates, with optional AI summaries and a **Generate summaries** button to fill in any that are missing
 
 ## Sensors
 

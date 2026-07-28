@@ -4,5 +4,5 @@
   "zip_release": true,
   "filename": "custom_component_monitor.zip",
   "hide_default_branch": false,
-  "homeassistant": "2023.1.0"
+  "homeassistant": "2023.7.0"
 }
