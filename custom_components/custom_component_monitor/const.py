@@ -19,6 +19,13 @@ ATTR_UPDATES = "updates"
 # Per-update AI enrichment (#67)
 ATTR_CATEGORIES = "categories"
 ATTR_SUMMARY = "summary"
+ATTR_ENTITY_ID = "entity_id"
+# AI run status, surfaced on sensor.hacs_updates (#91)
+ATTR_AI_ENABLED = "ai_enabled"
+ATTR_AI_PENDING = "ai_pending"
+ATTR_AI_IN_PROGRESS = "ai_in_progress"
+ATTR_AI_LAST_ERROR = "ai_last_error"
+ATTR_AI_LAST_RUN = "ai_last_run"
 
 # Options
 CONF_EXCLUDE = "exclude"  # user-maintained list of components to treat as used (#70)
@@ -28,6 +35,9 @@ CONF_AI_TASK_ENTITY = "ai_task_entity"
 
 # AI categorisation (#67)
 AI_CACHE_STORAGE_KEY = "custom_component_monitor.ai_categories"
+# Own store version — v2 moved from a flat {name|version: {...}} dict to
+# {"entries": {repo_key|version: record}, "legacy": {...}} (#91).
+AI_CACHE_STORAGE_VERSION = 2
 AI_CATEGORY_OPTIONS = [
     "Bug fixes",
     "New features",
@@ -79,6 +89,12 @@ AI_CATEGORY_ALIASES = {
 }
 AI_MAX_PER_SCAN = 8  # cap new AI calls per scan so refreshes stay snappy
 AI_CALL_TIMEOUT = 30  # seconds per AI Task call
+# A failed generation is recorded and retried with growing backoff rather than
+# re-sent on every hourly scan (#91). Index by (attempts - 1), clamped.
+AI_FAILURE_BACKOFF_MINUTES = (15, 60, 360, 1440)
+AI_MAX_ATTEMPTS = 5  # after this, only a forced/manual run retries
+AI_CACHE_MAX_AGE_DAYS = 30  # evict records untouched for this long
+AI_CACHE_MAX_ENTRIES = 500  # hard cap, oldest-updated dropped first
 
 # HACS category to display type mapping
 CATEGORY_MAP = {
@@ -95,6 +111,7 @@ STORAGE_KEY = "custom_component_monitor.update_actions"
 STORAGE_VERSION = 1
 SERVICE_UPDATE_AND_ACTION = "update_and_action"
 SERVICE_UPDATE_ALL = "update_all"
+SERVICE_GENERATE_SUMMARIES = "generate_summaries"
 UAT_CARD_JS = "update-action-tracker-card.js"
 UAT_CARD_BASE_PATH = f"/local/{DOMAIN}/{UAT_CARD_JS}"
 
