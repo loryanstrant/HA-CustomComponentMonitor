@@ -8,7 +8,7 @@ import re
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -48,6 +48,7 @@ from .const import (
     ATTR_COMPONENTS,
     ATTR_ENTITY_ID,
     ATTR_EXCLUDED_COMPONENTS,
+    ATTR_INSTALL_DATES_SINCE,
     ATTR_SUMMARY,
     ATTR_TOTAL_COMPONENTS,
     ATTR_UNUSED_COMPONENTS,
@@ -65,6 +66,7 @@ from .const import (
     SENSOR_UNUSED_INTEGRATIONS,
     SENSOR_UNUSED_THEMES,
 )
+from .install_dates import InstallDateRegistry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,14 +124,32 @@ class AiCacheStore(Store):
 # ---------------------------------------------------------------------------
 
 
+class InstallInfo(NamedTuple):
+    """Where a component lives on disk and how long it has been installed."""
+
+    path: Path | None
+    days: int | None
+    estimated: bool
+
+
 class ComponentScanner:
     """Scanner for HACS-installed custom components."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the scanner."""
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        install_dates: InstallDateRegistry | None = None,
+    ) -> None:
+        """Initialize the scanner.
+
+        *install_dates* is optional so the scanner stays independently
+        constructible; without it, install ages fall back to the filesystem
+        estimate and are always reported as estimated.
+        """
         self.hass = hass
         self.config_dir = Path(hass.config.config_dir)
         self._hacs_repositories: dict[str, Any] | None = None
+        self._install_dates = install_dates
 
     # -- storage helpers -----------------------------------------------------
 
@@ -225,6 +245,10 @@ class ComponentScanner:
 
         On Linux ``st_birthtime`` is unavailable, so we use
         ``min(st_ctime, st_mtime)`` as an approximation.
+
+        This is only ever an *estimate*: a HACS update rewrites the directory
+        and resets it. It seeds :class:`InstallDateRegistry`, which is what
+        actually answers "how long has this been installed" (#93).
         """
         try:
             if not path.exists():
@@ -311,6 +335,36 @@ class ComponentScanner:
                     return candidate
 
         return None
+
+    def _resolve_install_path_and_timestamp(
+        self, repo: dict[str, Any]
+    ) -> tuple[Path | None, float | None]:
+        """Install path plus its filesystem timestamp, in one executor hop."""
+        path = self._resolve_install_path(repo)
+        if path is None:
+            return None, None
+        return path, self._get_install_timestamp(path)
+
+    async def _install_info(
+        self, repo: dict[str, Any], now: datetime
+    ) -> InstallInfo:
+        """Return where *repo* lives on disk and how long it has been installed.
+
+        The filesystem timestamp is only a seed; the install-date registry is
+        the authority, because a HACS update resets the files (#93).
+        """
+        path, timestamp = await self.hass.async_add_executor_job(
+            self._resolve_install_path_and_timestamp, repo
+        )
+        if self._install_dates is not None:
+            days, estimated = self._install_dates.observe(repo, timestamp, now)
+            return InstallInfo(path, days, estimated)
+
+        days = None
+        if timestamp is not None:
+            installed_dt = datetime.fromtimestamp(timestamp, tz=now.tzinfo)
+            days = max(0, (now - installed_dt).days)
+        return InstallInfo(path, days, True)
 
     # -- theme helpers -------------------------------------------------------
 
@@ -501,22 +555,12 @@ class ComponentScanner:
                 or (full_name.split("/")[-1] if "/" in full_name else full_name)
             )
 
-            install_path = await self.hass.async_add_executor_job(
-                self._resolve_install_path, repo
-            )
-            days_installed: int | None = None
-            if install_path is not None:
-                ts = await self.hass.async_add_executor_job(
-                    self._get_install_timestamp, install_path
-                )
-                if ts is not None:
-                    installed_dt = datetime.fromtimestamp(ts, tz=now.tzinfo)
-                    days_installed = (now - installed_dt).days
+            install = await self._install_info(repo, now)
 
             # Get variant names from the actual YAML file(s)
             variants: list[str] = []
-            if install_path is not None:
-                variants = await self._get_theme_variants(install_path)
+            if install.path is not None:
+                variants = await self._get_theme_variants(install.path)
 
             # The repo is "used" if ANY of its variants appear in used_names
             is_used = False
@@ -536,7 +580,8 @@ class ComponentScanner:
                     f"https://github.com/{full_name}" if full_name else ""
                 ),
                 "version": repo.get("version_installed", "unknown"),
-                "days_installed": days_installed,
+                "days_installed": install.days,
+                "install_date_estimated": install.estimated,
                 "variants": len(variants),
             }
 
@@ -907,17 +952,7 @@ class ComponentScanner:
                 or (full_name.split("/")[-1] if "/" in full_name else full_name)
             )
 
-            install_path = await self.hass.async_add_executor_job(
-                self._resolve_install_path, repo
-            )
-            days_installed: int | None = None
-            if install_path is not None:
-                ts = await self.hass.async_add_executor_job(
-                    self._get_install_timestamp, install_path
-                )
-                if ts is not None:
-                    installed_dt = datetime.fromtimestamp(ts, tz=now.tzinfo)
-                    days_installed = (now - installed_dt).days
+            install = await self._install_info(repo, now)
 
             card_types = await self.hass.async_add_executor_job(
                 self._derive_card_types, repo
@@ -993,7 +1028,8 @@ class ComponentScanner:
                     f"https://github.com/{full_name}" if full_name else ""
                 ),
                 "version": repo.get("version_installed", "unknown"),
-                "days_installed": days_installed,
+                "days_installed": install.days,
+                "install_date_estimated": install.estimated,
                 "card_type": (
                     f"custom:{card_types[0]}" if card_types else "unknown"
                 ),
@@ -1073,17 +1109,7 @@ class ComponentScanner:
                 or (full_name.split("/")[-1] if "/" in full_name else full_name)
             )
 
-            install_path = await self.hass.async_add_executor_job(
-                self._resolve_install_path, repo
-            )
-            days_installed: int | None = None
-            if install_path is not None:
-                ts = await self.hass.async_add_executor_job(
-                    self._get_install_timestamp, install_path
-                )
-                if ts is not None:
-                    installed_dt = datetime.fromtimestamp(ts, tz=now.tzinfo)
-                    days_installed = (now - installed_dt).days
+            install = await self._install_info(repo, now)
 
             is_used = domain in configured
 
@@ -1093,7 +1119,8 @@ class ComponentScanner:
                     f"https://github.com/{full_name}" if full_name else ""
                 ),
                 "version": repo.get("version_installed", "unknown"),
-                "days_installed": days_installed,
+                "days_installed": install.days,
+                "install_date_estimated": install.estimated,
                 "domain": domain,
             }
 
@@ -1135,18 +1162,7 @@ class ComponentScanner:
                 or (full_name.split("/")[-1] if "/" in full_name else full_name)
             )
 
-            # Resolve install path and compute days since install
-            install_path = await self.hass.async_add_executor_job(
-                self._resolve_install_path, repo
-            )
-            days_installed: int | None = None
-            if install_path is not None:
-                ts = await self.hass.async_add_executor_job(
-                    self._get_install_timestamp, install_path
-                )
-                if ts is not None:
-                    installed_dt = datetime.fromtimestamp(ts, tz=now.tzinfo)
-                    days_installed = (now - installed_dt).days
+            install = await self._install_info(repo, now)
 
             components.append(
                 {
@@ -1156,7 +1172,8 @@ class ComponentScanner:
                         f"https://github.com/{full_name}" if full_name else ""
                     ),
                     "version": repo.get("version_installed", "unknown"),
-                    "days_installed": days_installed,
+                    "days_installed": install.days,
+                    "install_date_estimated": install.estimated,
                 }
             )
 
@@ -1403,7 +1420,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry | None = None) -> None:
         """Initialize."""
-        self.scanner = ComponentScanner(hass)
+        self.install_dates = InstallDateRegistry(hass)
+        self.scanner = ComponentScanner(hass, self.install_dates)
         self.entry = entry
         self._ai_store: Store | None = None
         self._ai_cache: dict[str, dict[str, Any]] = {}
@@ -1456,7 +1474,12 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from HACS storage."""
         try:
+            # Idempotent, but load it here as well as at setup: seeding from an
+            # empty in-memory registry would overwrite every recorded install
+            # date on disk (#93).
+            await self.install_dates.async_load()
             self.scanner._invalidate_cache()
+            self.install_dates.begin_scan()
 
             all_components = await self.scanner.scan_all_hacs_components()
             _LOGGER.debug(
@@ -1487,6 +1510,10 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(integrations["unused"]),
             )
 
+            # Close the install-date cycle before the update scan, so a failure
+            # fetching updates can't throw away this cycle's observations.
+            self.install_dates.end_scan()
+
             updates = await self.scanner.scan_updates()
             _LOGGER.debug("Update scan: %d pending updates", updates["count"])
 
@@ -1503,6 +1530,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "integrations": integrations,
                 "updates": updates,
                 "last_scan": dt_util.now().isoformat(),
+                "install_dates_since": self.install_dates.seeded_at,
             }
         except Exception as exc:
             _LOGGER.error("Error scanning custom components: %s", exc)
@@ -2280,6 +2308,9 @@ async def async_setup_entry(
         # Load the AI cache before the first refresh so cached summaries are
         # stamped on straight away and no AI call happens during setup (#91).
         await coordinator._async_load_ai_cache()
+        # And the install dates, so the first scan sees what is already
+        # recorded rather than re-seeding over it (#93).
+        await coordinator.install_dates.async_load()
         await coordinator.async_config_entry_first_refresh()
     except Exception as exc:
         raise ConfigEntryNotReady(
@@ -2357,6 +2388,11 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
             components = self.coordinator.data.get("all_components", [])
             attrs[ATTR_TOTAL_COMPONENTS] = len(components)
             attrs[ATTR_COMPONENTS] = components
+            # When exact install-date tracking began; the cards use it to
+            # explain why older components carry an estimated date (#93).
+            attrs[ATTR_INSTALL_DATES_SINCE] = self.coordinator.data.get(
+                "install_dates_since"
+            )
 
         elif key in (
             SENSOR_UNUSED_INTEGRATIONS,

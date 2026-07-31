@@ -11,6 +11,9 @@ from custom_components.custom_component_monitor.const import (
     CONF_AI_CATEGORIZATION_ENABLED,
     CONF_AI_TASK_ENTITY,
 )
+from custom_components.custom_component_monitor.install_dates import (
+    InstallDateRegistry,
+)
 from custom_components.custom_component_monitor.sensor import (
     CustomComponentMonitorCoordinator,
 )
@@ -39,6 +42,15 @@ def coordinator(hass: HomeAssistant) -> CustomComponentMonitorCoordinator:
     coord._ai_loaded = True
     coord._ai_store = None  # _save_ai_cache() becomes a no-op
     return coord
+
+
+@pytest.fixture
+def registry(hass: HomeAssistant) -> InstallDateRegistry:
+    """A loaded install-date registry with an in-memory (never-written) store."""
+    reg = InstallDateRegistry(hass)
+    reg._loaded = True
+    reg._store = None  # end_scan()'s save becomes a no-op
+    return reg
 
 
 @pytest.fixture
