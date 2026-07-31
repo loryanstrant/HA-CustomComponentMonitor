@@ -24,7 +24,7 @@ From v1.3.0, it also includes the former **HACS Update Action Tracker** function
 
 - the Custom Component Monitor dashboard card
 - the HACS Update Action Tracker dashboard card
-- the Recently Installed but Unused dashboard card
+- the Recently installed but unused dashboard card
 - a persistent `todo.hacs_update_actions` to-do list
 - the `custom_component_monitor.update_and_action` service
 
@@ -330,21 +330,20 @@ Notes:
 - It degrades gracefully: if the AI backend can't return a usable result, the scan still completes and those updates simply show no summary (a warning in the log explains why). Failures are recorded and retried with a growing backoff — 15 minutes, 1 hour, 6 hours, then daily, stopping after 5 attempts. The **Generate summaries** button and `force: true` always retry regardless.
 - Compatibility depends on the AI backend. In testing, an AI Task entity worked well with capable models (e.g. qwen) and cloud providers; some self-hosted models work better via a **Conversation agent**. The official OpenAI, Ollama, Anthropic, and Google Generative AI providers are good choices.
 
-### Recently Installed but Unused Card
+### Recently installed but unused card
 
 Surfaces HACS integrations, themes, and frontend cards that were installed within a recent window (default 30 days) and are still unused — the "I installed this and forgot to wire it up" view. It reads the same `sensor.unused_*` entities as the main card and filters each unused list by how long ago the item was installed, so it needs no extra configuration to work.
 
 #### Via UI
 
 1. Edit a dashboard → **Add Card**
-2. Search for **Recently Installed but Unused**
+2. Search for **Recently installed but unused**
 3. Optionally adjust the window (days) and visible sections
 
 #### Via YAML
 
 ```yaml
 type: custom:recently-installed-unused-card
-title: Recently Installed but Unused
 days_window: 30
 ```
 
@@ -352,7 +351,7 @@ days_window: 30
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `title` | string | `Recently Installed but Unused` | Card title |
+| `title` | string | `Recently installed but unused` | Card title |
 | `days_window` | number | `30` | Only show unused items installed within this many days |
 | `sections` | list | `["integrations", "themes", "frontend"]` | Which categories to display |
 
@@ -362,9 +361,26 @@ days_window: 30
 - Groups results by Integrations / Themes / Frontend Cards, hiding empty groups
 - Shows a count badge, or a friendly "all clear" message when nothing recent is unused
 - Repository links and version per item
+- Marks estimated install dates with a `~` (see the note below)
 - **Visual config editor** for all options
 
-> **Note:** install age is derived from the component's files on disk, so a HACS *update* can reset the clock and make an older component look freshly installed. Items whose install date can't be determined are hidden (and counted in the footer).
+#### How install dates work
+
+HACS doesn't record when you installed anything, and a HACS *update* rewrites the component's
+files — so before v1.13.0, install age came from the files on disk and an update reset the clock,
+making a component you'd had for years look freshly installed.
+
+From v1.13.0 the integration keeps its own record: the first time it sees a component installed,
+that date is written down and **never moves forward again**. An update no longer resets it.
+
+- Anything installed from v1.13.0 onwards gets an **exact** date.
+- Anything you already had is **estimated** from the files on disk and shown with a `~`
+  (`~14d ago`). Those estimates are the old, imperfect behaviour — they're now labelled rather
+  than presented as fact, and they age out of the window on their own.
+- Items whose install date can't be determined at all are hidden and counted in the footer.
+
+The footer shows when exact tracking began, and `sensor.hacs_installed_components` carries the
+same value as the `install_dates_since` attribute.
 
 ## Services
 
