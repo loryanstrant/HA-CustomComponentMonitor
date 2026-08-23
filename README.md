@@ -202,7 +202,9 @@ The integration automatically registers three Lovelace cards:
 
 1. Edit a dashboard → **Add Card**
 2. Search for **Custom Component Monitor**
-3. Configure title, sort order, and visible sections
+3. Configure the title, which components to list, sort order and visible sections
+
+![The Custom Component Monitor card editor](docs/images/card-editor-monitor.png)
 
 #### Via YAML
 
@@ -213,9 +215,12 @@ title: Custom Component Monitor
 
 #### Card Configuration
 
+Every option below is available in the visual editor — no YAML required.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `title` | string | `Custom Component Monitor` | Card title |
+| `title` | string | `Custom Component Monitor` | Card title. Leave it blank in the editor to follow the default |
+| `show` | string | `unused` | Which components to list: `unused`, `all`, or `used` |
 | `sort` | string | `name` | Default sort order: `name` or `days` |
 | `sections` | list | `["integrations", "themes", "frontend"]` | Which sections to display |
 | `collapsed_by_default` | boolean | `false` | Start with every section collapsed; users can still expand them |
@@ -282,8 +287,12 @@ collapsed_by_default: true
 
 1. Edit a dashboard → **Add Card**
 2. Search for **HACS Update Action Tracker**
-3. Optionally customise the title
+3. Optionally customise the title and which filter the card opens on
 4. Save
+
+![The HACS Update Action Tracker card editor](docs/images/card-editor-update-tracker.png)
+
+The category field only appears once AI categorisation is enabled in the integration.
 
 #### Via YAML
 
@@ -294,11 +303,13 @@ title: HACS Update Tracker
 
 #### Card Configuration
 
+Every option below is available in the visual editor — no YAML required.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `title` | string | `HACS Update Tracker` | Card title |
+| `title` | string | `HACS Update Tracker` | Card title. Leave it blank in the editor to follow the default |
 | `default_filter` | string | `all` | Initial component-type filter: `integration`, `card`, `theme`, or `other` |
-| `default_category_filter` | string | `all` | Initial AI-category filter (e.g. `Bug fixes`); only applies when AI categorisation is enabled |
+| `default_category_filter` | string | `all` | Initial AI-category filter (e.g. `Bug fixes`). The editor only offers this field once AI categorisation is enabled in the integration |
 
 #### Card Features
 
@@ -340,6 +351,8 @@ Surfaces HACS integrations, themes, and frontend cards that were installed withi
 2. Search for **Recently installed but unused**
 3. Optionally adjust the window (days) and visible sections
 
+![The Recently installed but unused card editor](docs/images/card-editor-recently-installed.png)
+
 #### Via YAML
 
 ```yaml
@@ -349,10 +362,12 @@ days_window: 30
 
 #### Card Configuration
 
+Every option below is available in the visual editor — no YAML required.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `title` | string | `Recently installed but unused` | Card title |
-| `days_window` | number | `30` | Only show unused items installed within this many days |
+| `title` | string | `Recently installed but unused` | Card title. Leave it blank in the editor to follow the default |
+| `days_window` | number | `30` | Only show unused items installed within this many days (1–365) |
 | `sections` | list | `["integrations", "themes", "frontend"]` | Which categories to display |
 
 #### Card Features
