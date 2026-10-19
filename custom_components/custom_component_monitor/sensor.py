@@ -92,7 +92,7 @@ from .const import (
 )
 from .countries import CountryVerdict, classify, scope_is_foreign
 from .install_dates import InstallDateRegistry
-from .new_items import NewItemRegistry
+from .new_items import NewItemRegistry, display_name_for
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1516,13 +1516,7 @@ class ComponentScanner:
             if not is_new_flag and age_days > NEW_ITEMS_WINDOW_DAYS:
                 continue
 
-            repo_manifest = repo.get("repository_manifest", {}) or {}
-            name = (
-                repo.get("manifest_name")
-                or repo.get("name")
-                or repo_manifest.get("name")
-                or (full_name.split("/")[-1] if "/" in full_name else full_name)
-            )
+            name = display_name_for(full_name, repo)
 
             description = repo.get("description")
             description = description[:200] if isinstance(description, str) else None

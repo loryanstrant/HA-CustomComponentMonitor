@@ -125,6 +125,14 @@ categorisation (Bug fixes / New features / …) and must not be conflated with i
   categorisation rests on the name alone and will often be `Other`.
 - HACS stores cards under the category name `plugin`, not `lovelace`; the mapping to the
   user-facing word "Card" happens in the scanner.
+- **HACS has no stored display name for anything you have not installed.** Measured against
+  the production store: of 2,244 new, not-installed repositories, **none** carried a name —
+  `repository_manifest` is an empty dict and `name` is absent. HACS's panel still shows a
+  readable name for them because its own `display_name` property falls back to
+  `slug.replace("-", " ").title()`. The card reads the stored name wherever HACS has one and
+  otherwise derives one the same way, with the Home-Assistant-flavoured prefixes and suffixes
+  removed and the author's own capitalisation preserved. `owner/repo` remains on the row's
+  tooltip and behind the GitHub link.
 - The country test is a heuristic. It is deliberately biased towards keeping an item
   (any home signal wins) and every hide is auditable, because a wrong hide is invisible and
   a wrong keep costs one glance.

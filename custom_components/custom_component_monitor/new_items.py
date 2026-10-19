@@ -20,6 +20,7 @@ on items already categorised.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
@@ -47,6 +48,240 @@ def item_key(full_name: str) -> str:
     matches the key this module recorded it under.
     """
     return str(full_name or "").strip().lower()
+
+
+# Repository-name decoration that carries no meaning once you already know you
+# are looking at a Home Assistant add-on. Longest first, so "home-assistant-"
+# is consumed before the "ha-" inside it ever gets a look.
+_NAME_PREFIXES: tuple[str, ...] = (
+    "home-assistant-",
+    "home_assistant_",
+    "homeassistant-",
+    "homeassistant_",
+    "lovelace-",
+    "lovelace_",
+    "hacs-",
+    "hacs_",
+    "hass-",
+    "hass_",
+    "ha-",
+    "ha_",
+)
+_NAME_SUFFIXES: tuple[str, ...] = (
+    "-home-assistant",
+    "_home_assistant",
+    "-homeassistant",
+    "_homeassistant",
+    "-custom-components",
+    "-custom-component",
+    "_custom_component",
+    "-integration",
+    "_integration",
+    "-component",
+    "_component",
+    "-hacs",
+    "_hacs",
+    "-hass",
+    "_hass",
+    "-ha",
+    "_ha",
+)
+
+# Tokens that are initialisms, not words — ``.title()`` would turn them into
+# "Mqtt" and "Ev". Matched case-insensitively against each token.
+_NAME_ACRONYMS: frozenset[str] = frozenset(
+    {
+        "AC",
+        "AI",
+        "API",
+        "AQI",
+        "BLE",
+        "BMS",
+        "CO2",
+        "CPU",
+        "DC",
+        "DNS",
+        "DSMR",
+        "ESP",
+        "ESP32",
+        "ESP8266",
+        "EV",
+        "EVSE",
+        "GPIO",
+        "GPS",
+        "GPU",
+        "HA",
+        "HACS",
+        "HTTP",
+        "HVAC",
+        "IP",
+        "IR",
+        "KNX",
+        "LCD",
+        "LED",
+        "MCP",
+        "MQTT",
+        "NAS",
+        "NFC",
+        "OLED",
+        "ONVIF",
+        "OTA",
+        "PM25",
+        "POE",
+        "PV",
+        "RFID",
+        "RGB",
+        "RGBW",
+        "RPC",
+        "RTSP",
+        "SMA",
+        "SMS",
+        "SMTP",
+        "SOC",
+        "SQL",
+        "SSH",
+        "STT",
+        "TTS",
+        "TV",
+        "UI",
+        "UPS",
+        "URL",
+        "USB",
+        "UV",
+        "VPN",
+        "WLED",
+        "ZHA",
+    }
+)
+
+# Words that can only be left dangling by removing the suffix they pointed at.
+# Only ever consulted when a suffix WAS removed: "plug-in" and "listen-in" are
+# ordinary names whose last word must survive untouched.
+_NAME_DANGLING: frozenset[str] = frozenset({"for", "with", "in", "on", "to", "and"})
+
+_SLUG_SIGNATURE = re.compile(r"[^a-z0-9]+")
+
+_CAMEL_BOUNDARIES = (
+    # "washData" -> "wash Data", "esp32Sensor" -> "esp32 Sensor". Two
+    # lower/digit characters are required before the boundary, not one, so the
+    # single-letter-prefix brands stay whole: "iOS" and "eBus" would otherwise
+    # come apart into "i OS" and "e Bus", and "FiOS" into "Fi OS".
+    re.compile(r"(?<=[a-z0-9]{2})(?=[A-Z])"),
+    # "HABridge" -> "HA Bridge" (an acronym butted against a word). Two
+    # capitals are required behind the boundary as well, so a name that is
+    # simply capitalised oddly is left whole: "HAsmartirrigation" would
+    # otherwise be cut into "H Asmartirrigation", which is worse than either
+    # leaving it alone or what HACS itself shows.
+    re.compile(r"(?<=[A-Z]{2})(?=[A-Z][a-z])"),
+)
+
+
+def prettify_repo_name(full_name: str) -> str:
+    """Turn ``owner/ha-washing-machine`` into ``Washing Machine``.
+
+    HACS only stores a real display name for repositories it has actually
+    fetched the contents of — in practice, the ones you have installed. For
+    everything merely *listed* in the store, ``repository_manifest`` is an
+    empty dict, so HACS's own panel falls back to
+    ``slug.replace("-", " ").title()``. That fallback is where names like
+    "Vertical Stack In Card" come from, and it is also why a repository called
+    ``ScentAirHABridge`` shows up there as "Scentairhabridge": ``.title()``
+    lowercases everything it did not capitalise itself.
+
+    This does the same job and keeps the same spirit, but without destroying
+    capitalisation the author chose: it drops the Home-Assistant-flavoured
+    prefixes and suffixes that every second repository carries, splits
+    camelCase, and leaves acronyms and already-capitalised words alone. Falls
+    back to the bare slug if there is nothing left to show, so this can never
+    return an empty name.
+    """
+    slug = str(full_name or "").strip()
+    if "/" in slug:
+        slug = slug.rsplit("/", 1)[-1]
+    slug = slug.strip()
+    if not slug:
+        return ""
+
+    trimmed = slug
+    lowered = trimmed.lower()
+    for prefix in _NAME_PREFIXES:
+        if lowered.startswith(prefix) and len(trimmed) > len(prefix):
+            trimmed = trimmed[len(prefix) :]
+            break
+    lowered = trimmed.lower()
+    suffix_stripped = False
+    for suffix in _NAME_SUFFIXES:
+        if lowered.endswith(suffix) and len(trimmed) > len(suffix):
+            trimmed = trimmed[: -len(suffix)]
+            suffix_stripped = True
+            break
+
+    spaced = re.sub(r"[-_.\s]+", " ", trimmed)
+    for pattern in _CAMEL_BOUNDARIES:
+        spaced = pattern.sub(" ", spaced)
+
+    words = [word for word in spaced.split(" ") if word]
+    # "DTE-Rates-for-Home-Assistant" loses its tail to the suffix list and
+    # would otherwise read "DTE Rates For". The preposition only existed to
+    # introduce the part that has just been removed, so it goes with it — but
+    # only then. Without the ``suffix_stripped`` gate this would also eat the
+    # last word of "plug-in" and "listen-in", which were never decorated at
+    # all, and one pop is all a removed suffix can ever leave behind.
+    if suffix_stripped and len(words) > 1 and words[-1].lower() in _NAME_DANGLING:
+        words.pop()
+    if not words:
+        # Stripping ate the whole name (a repo literally called "ha-component").
+        return slug
+
+    pretty: list[str] = []
+    for word in words:
+        if word.upper() in _NAME_ACRONYMS:
+            pretty.append(word.upper())
+        elif word.isupper() or not word.islower():
+            # "ESP32", "iPhone", "SmartThings" — the author capitalised it
+            # deliberately, so leave it exactly as written.
+            pretty.append(word)
+        else:
+            pretty.append(word[:1].upper() + word[1:])
+    return " ".join(pretty)
+
+
+def _slug_signature(value: str) -> str:
+    """Letters and digits only, lower-cased — ``My-Repo`` and ``my_repo`` agree."""
+    return _SLUG_SIGNATURE.sub("", str(value or "").lower())
+
+
+def display_name_for(full_name: str, repo: dict[str, Any] | None = None) -> str:
+    """The best display name available for a HACS repository record.
+
+    Preference order follows HACS's own ``display_name`` property so the card
+    agrees with the HACS panel wherever HACS actually has a name:
+    ``repository_manifest.name`` (the ``hacs.json`` name), then the
+    integration's own ``manifest_name``, then ``name``, and only then a
+    prettified slug. The previous order here tried ``manifest_name`` first,
+    which disagreed with HACS for any repository that set both.
+    """
+    record = repo or {}
+    manifest = record.get("repository_manifest")
+    manifest = manifest if isinstance(manifest, dict) else {}
+    slug = _slug_signature(str(full_name or "").rsplit("/", 1)[-1])
+    for candidate in (
+        manifest.get("name"),
+        record.get("manifest_name"),
+        record.get("name"),
+    ):
+        # A "name" that is just the repo slug is not a display name — it is
+        # the very thing we were trying to get away from. Compared on a
+        # case- and separator-free signature, so "My-Repo" stored against
+        # ``my_repo`` is recognised as the slug it is rather than sneaking
+        # through on a difference of punctuation.
+        if (
+            isinstance(candidate, str)
+            and candidate.strip()
+            and _slug_signature(candidate) != slug
+        ):
+            return candidate.strip()
+    return prettify_repo_name(full_name)
 
 
 class NewItemStore(Store):

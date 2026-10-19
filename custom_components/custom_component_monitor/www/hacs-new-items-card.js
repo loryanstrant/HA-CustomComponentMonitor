@@ -677,7 +677,10 @@ class HacsNewItemsCard extends HTMLElement {
       "</div>" +
       '<div class="item-body">' +
       '<div class="item-top">' +
-      '<span class="item-name" title="' + hniAttr(name) + '">' + name + "</span>" +
+      // The tooltip carries "owner/repo": the visible line is now HACS's
+      // display name, so this is the only place left to see which repository
+      // it actually is without opening the link.
+      '<span class="item-name" title="' + hniAttr(hniEscapeHtml(item.full_name || item.name || "")) + '">' + name + "</span>" +
       '<span class="kind-chip">' + kindLabel + "</span>" +
       "</div>" +
       '<div class="item-meta">' + metaText + "</div>" +
@@ -705,7 +708,8 @@ class HacsNewItemsCard extends HTMLElement {
       return (
         '<div class="audit-row">' +
         "<div>" +
-        '<div class="audit-name">' + hniEscapeHtml(row.name || row.full_name || "Unknown") + "</div>" +
+        '<div class="audit-name" title="' + hniAttr(hniEscapeHtml(row.full_name || "")) + '">' +
+        hniEscapeHtml(row.name || row.full_name || "Unknown") + "</div>" +
         '<div class="audit-reason">' + hniEscapeHtml(row.reason || "") + "</div>" +
         "</div>" +
         '<button type="button" class="restore-btn" data-restore="' + hniAttr(hniEscapeHtml(key)) + '">Restore</button>' +

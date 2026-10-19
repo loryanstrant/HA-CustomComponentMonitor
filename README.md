@@ -438,9 +438,32 @@ Every option below is available in the visual editor — no YAML required.
 - Groups items alphabetically by what they do, with "Other" pinned last
 - Filter chips for All / Integrations / Cards
 - **Dismiss all (n)** button per group, or tick individual items and **Dismiss N selected**
+- Shows each item's display name, not its repository slug — the same name the HACS panel
+  shows, with `owner/repo` on the tooltip and behind the GitHub link (see
+  [Where the names come from](#where-the-names-come-from))
 - Shows stars, downloads, age and a two-line description per item
 - Repository links and single-item dismiss buttons
 - **Show hidden (n)** reveals country-hidden items with the matched term and field, plus a **Restore** button
+
+#### Where the names come from
+
+HACS only stores a real display name for repositories it has fetched the contents of — in
+practice, the ones you have installed. For everything else in the store it has nothing: the
+2,244 new, not-installed repositories in one real store carried no name at all. The HACS
+panel still shows readable names for them because it generates one from the repository name
+at display time.
+
+The card does the same thing, in the same order HACS does:
+
+1. the `name` from the repository's `hacs.json`, if it has one — "Mushroom";
+2. the integration's own `manifest.json` name — "Frigate";
+3. otherwise the repository name tidied up.
+
+Step 3 goes slightly further than HACS's version, which lower-cases anything it did not
+capitalise itself: `ha-checklist-card` becomes **Checklist Card** rather than "Ha Checklist
+Card", `ScentAirHABridge` becomes **Scent Air HA Bridge** rather than "Scentairhabridge",
+and `pv_management` becomes **PV Management**. The `owner/repo` the item actually lives at
+is still there on the row's tooltip and behind the GitHub link.
 
 #### Sensor: `sensor.hacs_new_items`
 
