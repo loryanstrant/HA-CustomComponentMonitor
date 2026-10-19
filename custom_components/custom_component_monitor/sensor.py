@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import yaml
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -44,29 +45,54 @@ from .const import (
     ATTR_AI_LAST_ERROR,
     ATTR_AI_LAST_RUN,
     ATTR_AI_PENDING,
+    ATTR_BY_CATEGORY,
     ATTR_CATEGORIES,
     ATTR_COMPONENTS,
+    ATTR_DISMISSED_COUNT,
     ATTR_ENTITY_ID,
     ATTR_EXCLUDED_COMPONENTS,
+    ATTR_HIDDEN,
+    ATTR_HIDDEN_COUNT,
+    ATTR_HIDDEN_TRUNCATED,
+    ATTR_HOME_COUNTRY,
     ATTR_INSTALL_DATES_SINCE,
+    ATTR_ITEMS,
+    ATTR_ITEMS_TRUNCATED,
     ATTR_SUMMARY,
     ATTR_TOTAL_COMPONENTS,
+    ATTR_TOTAL_NEW,
     ATTR_UNUSED_COMPONENTS,
     ATTR_UPDATES,
     ATTR_USED_COMPONENTS,
     CATEGORY_MAP,
     CONF_AI_CATEGORIZATION_ENABLED,
     CONF_AI_TASK_ENTITY,
+    CONF_AUTO_HIDE_FOREIGN,
     CONF_EXCLUDE,
+    CONF_EXTRA_HOME_TERMS,
+    CONF_HOME_COUNTRY,
+    CONF_NEW_ITEMS_ENABLED,
+    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
+    DEFAULT_HOME_COUNTRY,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    NEW_ITEM_CATEGORY_ALIASES,
+    NEW_ITEM_CATEGORY_FALLBACK,
+    NEW_ITEM_CATEGORY_OPTIONS,
+    NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
+    NEW_ITEMS_MAX_EXPOSED,
+    NEW_ITEMS_MAX_EXPOSED_HIDDEN,
+    NEW_ITEMS_WINDOW_DAYS,
     SENSOR_ALL_COMPONENTS,
     SENSOR_HACS_UPDATES,
+    SENSOR_NEW_ITEMS,
     SENSOR_UNUSED_FRONTEND,
     SENSOR_UNUSED_INTEGRATIONS,
     SENSOR_UNUSED_THEMES,
 )
+from .countries import CountryVerdict, classify, scope_is_foreign
 from .install_dates import InstallDateRegistry
+from .new_items import NewItemRegistry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1409,6 +1435,251 @@ class ComponentScanner:
         updates.sort(key=lambda c: (c["type"], c["name"].lower()))
         return {"count": len(updates), "updates": updates}
 
+    # -- new in HACS (#95) ----------------------------------------------------
+
+    async def scan_new_items(
+        self,
+        registry: NewItemRegistry,
+        *,
+        home_country: str = DEFAULT_HOME_COUNTRY,
+        extra_home_terms: Sequence[str] = (),
+        auto_hide_foreign: bool = True,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Scan for HACS repositories that are new and not installed (#95).
+
+        Every other scanner above selects ``repo.get("installed", False)``;
+        this one deliberately selects the opposite. A repository counts as
+        new when it is **not installed** and either HACS still flags it
+        ``new: true`` in this snapshot, or the registry's own ``first_seen``
+        for it falls inside :data:`NEW_ITEMS_WINDOW_DAYS` — HACS clears its
+        own ``new`` flag (a panel action, some upgrades reset it wholesale),
+        so the second clause is load-bearing, not a fallback.
+
+        ``registry.note_seen`` is only ever called for a repository that is
+        ``new: true`` in *this* snapshot, never for one kept only by the
+        window clause — otherwise every repository HACS has ever indexed
+        would eventually become "new" forever.
+
+        Only ``integration`` (-> ``"integration"``) and ``plugin``
+        (-> ``"card"``) categories are considered; themes and anything else
+        are out of scope for this card. The country pre-filter runs before
+        anything is handed to the AI — see
+        ``docs/specs/new-in-hacs.md``. AI categorisation itself is a
+        separate, batched pass
+        (:meth:`CustomComponentMonitorCoordinator.async_generate_new_item_categories`)
+        so a slow local model can never block this scan.
+
+        Returns ``{"items": [...], "hidden": [...], "dismissed_count": int,
+        "total_new": int, "known_full_names": set[str]}``. ``total_new``
+        counts every new repository, including the hidden and dismissed
+        ones; ``known_full_names`` is every repository present in the
+        current HACS snapshot (installed or not), for the caller to prune
+        the registry against.
+        """
+        hacs_repos = await self._load_hacs_repositories()
+        now_local = now or dt_util.now()
+        now_utc = dt_util.as_utc(now_local)
+
+        known_full_names: set[str] = set()
+        candidates: list[dict[str, Any]] = []
+
+        for _repo_id, repo in hacs_repos.items():
+            if not isinstance(repo, dict):
+                continue
+            full_name = str(repo.get("full_name") or "")
+            if full_name:
+                known_full_names.add(full_name)
+
+            if not full_name or repo.get("installed", False):
+                continue
+
+            category = repo.get("category", "")
+            if category == "integration":
+                kind = "integration"
+            elif category == "plugin":
+                kind = "card"
+            else:
+                continue
+
+            is_new_flag = bool(repo.get("new"))
+            if is_new_flag:
+                first_seen_iso = registry.note_seen(full_name, now=now_utc)
+            else:
+                first_seen_iso = registry.first_seen(full_name)
+                if first_seen_iso is None:
+                    # Neither HACS nor our own registry has ever called this
+                    # one new — it is simply an uninstalled repository.
+                    continue
+
+            age_days = registry.age_days(full_name, now=now_utc)
+            if not is_new_flag and age_days > NEW_ITEMS_WINDOW_DAYS:
+                continue
+
+            repo_manifest = repo.get("repository_manifest", {}) or {}
+            name = (
+                repo.get("manifest_name")
+                or repo.get("name")
+                or repo_manifest.get("name")
+                or (full_name.split("/")[-1] if "/" in full_name else full_name)
+            )
+
+            description = repo.get("description")
+            description = description[:200] if isinstance(description, str) else None
+
+            topics = repo.get("topics")
+            topics = list(topics) if isinstance(topics, list) else []
+
+            ai_record = registry.get_ai(full_name)
+
+            candidates.append(
+                {
+                    "name": name,
+                    "full_name": full_name,
+                    "repository": f"https://github.com/{full_name}",
+                    "kind": kind,
+                    "description": description,
+                    "topics": topics,
+                    "stars": repo.get("stargazers_count"),
+                    "downloads": repo.get("downloads"),
+                    "last_updated": repo.get("last_updated"),
+                    "first_seen": first_seen_iso,
+                    "age_days": age_days,
+                    "category": (
+                        ai_record["category"]
+                        if ai_record
+                        else NEW_ITEM_CATEGORY_FALLBACK
+                    ),
+                    "ai_pending": ai_record is None,
+                }
+            )
+
+        visible: list[dict[str, Any]] = []
+        hidden: list[dict[str, Any]] = []
+        dismissed_count = 0
+
+        for item in candidates:
+            full_name = item["full_name"]
+            if registry.is_dismissed(full_name):
+                dismissed_count += 1
+                continue
+
+            if not auto_hide_foreign or registry.is_never_hide(full_name):
+                visible.append(item)
+                continue
+
+            verdict = classify(
+                {
+                    "name": item["name"],
+                    "full_name": full_name,
+                    "description": item["description"],
+                    "topics": item["topics"],
+                },
+                home_country=home_country,
+                extra_home_terms=extra_home_terms,
+            )
+            if verdict.hide:
+                match = verdict.foreign_matches[0]
+                registry.record_hidden(
+                    full_name,
+                    country=match.country,
+                    term=match.term,
+                    field=match.field,
+                    source="rules",
+                )
+                hidden.append(
+                    {
+                        **item,
+                        "reason": verdict.reason,
+                        "country": match.country,
+                        "term": match.term,
+                        "field": match.field,
+                        "source": "rules",
+                    }
+                )
+            else:
+                # The AI's country_scope is the second hide chance, and it has
+                # to be re-derived here rather than trusted from the
+                # ``auto_hidden`` record: this loop is the *only* place
+                # visibility is decided, so an AI-sourced hide would otherwise
+                # be cleared on the very next scan and — its verdict being
+                # cached, leaving ``ai_pending`` false — never reconsidered,
+                # un-hiding itself silently and for good.
+                ai_record = registry.get_ai(full_name)
+                scope = (ai_record or {}).get("country_scope")
+                if ai_scope_hides(
+                    item,
+                    scope,
+                    home_country=home_country,
+                    extra_home_terms=extra_home_terms,
+                    verdict=verdict,
+                ):
+                    registry.record_hidden(
+                        full_name,
+                        country=scope,
+                        term=scope,
+                        field="ai_country_scope",
+                        source="ai",
+                    )
+                    hidden.append(
+                        {
+                            **item,
+                            "reason": f'AI judged this built for "{scope}"',
+                            "country": scope,
+                            "term": scope,
+                            "field": "ai_country_scope",
+                            "source": "ai",
+                        }
+                    )
+                else:
+                    registry.clear_hidden(full_name)
+                    visible.append(item)
+
+        return {
+            "items": visible,
+            "hidden": hidden,
+            "dismissed_count": dismissed_count,
+            "total_new": len(candidates),
+            "known_full_names": known_full_names,
+        }
+
+
+def ai_scope_hides(
+    item: Mapping[str, Any],
+    country_scope: str | None,
+    *,
+    home_country: str,
+    extra_home_terms: Sequence[str] = (),
+    verdict: CountryVerdict | None = None,
+) -> bool:
+    """Does the AI's ``country_scope`` justify hiding *item*? (#95)
+
+    The second hide chance lives in one function because two call sites have
+    to agree about it, and they must: ``ComponentScanner.scan_new_items``
+    re-decides visibility on every cycle, so anything the AI batch
+    (:meth:`CustomComponentMonitorCoordinator.async_generate_new_item_categories`)
+    decided on its own would be undone an hour later.
+
+    A home signal in the repository's own text beats the model's judgement,
+    exactly as it beats a rules match — "AU/NZ energy prices" is for this
+    house whatever the AI makes of it. Pass *verdict* when the caller has
+    already classified the item, to save a second scan of the same text.
+    """
+    if not scope_is_foreign(country_scope, home_country):
+        return False
+    if verdict is None:
+        verdict = classify(
+            {
+                "name": item.get("name"),
+                "full_name": item.get("full_name"),
+                "description": item.get("description"),
+                "topics": item.get("topics"),
+            },
+            home_country=home_country,
+            extra_home_terms=extra_home_terms,
+        )
+    return not verdict.home_matches
+
 
 # ---------------------------------------------------------------------------
 # Coordinator
@@ -1435,6 +1706,14 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ai_structured_ok: bool | None = None
         self.ai_in_progress = False
         self.ai_last_run: str | None = None
+        # New in HACS (#95). ``new_items_registry`` is a fixed attribute name —
+        # the dismiss/restore/categorise services read and write it directly.
+        self.new_items_registry = NewItemRegistry(hass)
+        self.new_items_ai_in_progress = False
+        self.new_items_ai_last_run: str | None = None
+        self._new_items_ai_last_error: str | None = None
+        self._new_items_ai_lock = asyncio.Lock()
+        self._new_items_ai_task: asyncio.Task | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -1470,6 +1749,38 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result["used"] = result.get("used", []) + moved
         result["excluded"] = moved
         return result
+
+    def _new_items_settings(self) -> dict[str, Any]:
+        """Per-cycle settings for the New in HACS scan (#95).
+
+        Recomputed on every call (scan and AI batch alike) rather than cached
+        on the coordinator, since options can change between scans without a
+        reload.
+        """
+        options = self.entry.options if self.entry else {}
+        scan_enabled = options.get(CONF_NEW_ITEMS_ENABLED) is not False
+        home_country = (
+            options.get(CONF_HOME_COUNTRY)
+            or getattr(self.hass.config, "country", None)
+            or DEFAULT_HOME_COUNTRY
+        )
+        extra_home_terms = options.get(CONF_EXTRA_HOME_TERMS) or []
+        if isinstance(extra_home_terms, str):
+            extra_home_terms = [extra_home_terms]
+        auto_hide_foreign = options.get(CONF_AUTO_HIDE_FOREIGN) is not False
+        max_ai_per_cycle = int(
+            options.get(
+                CONF_NEW_ITEMS_MAX_AI_PER_CYCLE, NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+            )
+            or NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+        )
+        return {
+            "scan_enabled": scan_enabled,
+            "home_country": home_country,
+            "extra_home_terms": extra_home_terms,
+            "auto_hide_foreign": auto_hide_foreign,
+            "max_ai_per_cycle": max_ai_per_cycle,
+        }
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from HACS storage."""
@@ -1523,12 +1834,28 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # timeout and lose every summary it had generated (#91).
             self._apply_cached_ai(updates)
 
+            # New in HACS (#95): not-installed, recently-new repositories.
+            new_settings = self._new_items_settings()
+            new_items: dict[str, Any] | None = None
+            if new_settings["scan_enabled"]:
+                await self.new_items_registry.async_load()
+                new_items = await self.scanner.scan_new_items(
+                    self.new_items_registry,
+                    home_country=new_settings["home_country"],
+                    extra_home_terms=new_settings["extra_home_terms"],
+                    auto_hide_foreign=new_settings["auto_hide_foreign"],
+                )
+                self.new_items_registry.prune(new_items.pop("known_full_names", set()))
+                await self.new_items_registry.async_save()
+
             data = {
                 "all_components": all_components,
                 "themes": themes,
                 "frontend": frontend,
                 "integrations": integrations,
                 "updates": updates,
+                "new_items": new_items,
+                "new_items_home_country": new_settings["home_country"],
                 "last_scan": dt_util.now().isoformat(),
                 "install_dates_since": self.install_dates.seeded_at,
             }
@@ -1541,6 +1868,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # an update had exhausted its retries (#91).
         if updates.get("ai_retryable"):
             self._schedule_ai_run()
+        if new_items and any(item.get("ai_pending") for item in new_items.get("items", [])):
+            self._schedule_new_items_ai_run()
         return data
 
     # -- AI summarise & categorise updates (#67) ----------------------------
@@ -1752,6 +2081,9 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._ai_task is not None and not self._ai_task.done():
             self._ai_task.cancel()
         self._ai_task = None
+        if self._new_items_ai_task is not None and not self._new_items_ai_task.done():
+            self._new_items_ai_task.cancel()
+        self._new_items_ai_task = None
 
     async def async_generate_summaries(
         self,
@@ -2247,6 +2579,312 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return None
 
+    # -- New in HACS: AI categorisation (#95) -------------------------------
+
+    @property
+    def new_items_ai_last_error(self) -> str | None:
+        """Last new-items AI failure message, or None when the last run was clean."""
+        return self._new_items_ai_last_error
+
+    def _schedule_new_items_ai_run(self) -> None:
+        """Kick off a bounded background new-items categorisation pass, if none running."""
+        if not self.ai_enabled:
+            return
+        if self._new_items_ai_task is not None and not self._new_items_ai_task.done():
+            return
+        self._new_items_ai_task = self.hass.async_create_background_task(
+            self._async_deferred_new_items_ai_run(), name=f"{DOMAIN}_new_items_ai"
+        )
+
+    async def _async_deferred_new_items_ai_run(self) -> None:
+        """Run a new-items pass once the coordinator has published its data.
+
+        Same reasoning as ``_async_deferred_ai_run``: without this yield the
+        pass would run inside ``_async_update_data``, before
+        ``DataUpdateCoordinator`` assigns ``self.data`` (#91/#95).
+        """
+        await asyncio.sleep(0)
+        await self.async_generate_new_item_categories()
+
+    async def async_generate_new_item_categories(
+        self, *, limit: int | None = None
+    ) -> dict[str, int]:
+        """Batch-categorise pending new HACS items via the AI Task (#95).
+
+        Mirrors ``async_generate_summaries``: bounded, cached, and progress is
+        pushed to listeners as each item lands so a slow local model fills the
+        card in progressively rather than all-or-nothing. *limit* defaults to
+        the ``CONF_NEW_ITEMS_MAX_AI_PER_CYCLE`` option.
+
+        A second hide chance happens here: when the AI's ``country_scope``
+        turns out to be foreign (:func:`ai_scope_hides`) and the item has no
+        ``never_hide`` exemption, it is moved from ``items`` to ``hidden``
+        with ``source == "ai"`` — the rules pre-filter in
+        ``ComponentScanner.scan_new_items`` only catches what the repository's
+        own text gives away; this catches what the AI inferred instead.
+
+        That move is only the immediate, in-memory half of it, so the card
+        updates while the batch runs. The hide *persists* because the cached
+        ``country_scope`` is re-read by ``scan_new_items`` on every later
+        cycle, which is the only place visibility is ever decided — hence
+        both sides going through the one :func:`ai_scope_hides` predicate.
+        """
+        counts = {"generated": 0, "failed": 0, "skipped": 0, "remaining": 0}
+        enabled, ai_entity = self._ai_settings()
+        if not enabled or not self.data:
+            return counts
+
+        new_items = self.data.get("new_items")
+        if not new_items:
+            return counts
+
+        settings = self._new_items_settings()
+        batch_limit = settings["max_ai_per_cycle"] if limit is None else limit
+
+        async with self._new_items_ai_lock:
+            items: list[dict[str, Any]] = new_items.get("items", [])
+            todo = [item for item in items if item.get("ai_pending")]
+
+            if batch_limit is not None and len(todo) > batch_limit:
+                counts["remaining"] = len(todo) - batch_limit
+                todo = todo[:batch_limit]
+
+            if not todo:
+                return counts
+
+            self.new_items_ai_in_progress = True
+            self.async_update_listeners()
+            try:
+                for item in todo:
+                    full_name = item["full_name"]
+                    result = await self._async_categorise_new_item(item, ai_entity)
+                    if result is None:
+                        counts["failed"] += 1
+                        continue
+
+                    self.new_items_registry.set_ai(
+                        full_name,
+                        category=result["category"],
+                        country_scope=result["country_scope"],
+                        model=ai_entity,
+                    )
+                    item["category"] = result["category"]
+                    item["ai_pending"] = False
+                    counts["generated"] += 1
+
+                    if (
+                        settings["auto_hide_foreign"]
+                        and not self.new_items_registry.is_never_hide(full_name)
+                        and ai_scope_hides(
+                            item,
+                            result["country_scope"],
+                            home_country=settings["home_country"],
+                            extra_home_terms=settings["extra_home_terms"],
+                        )
+                    ):
+                        self.new_items_registry.record_hidden(
+                            full_name,
+                            country=result["country_scope"],
+                            term=result["country_scope"],
+                            field="ai_country_scope",
+                            source="ai",
+                        )
+                        items.remove(item)
+                        new_items.setdefault("hidden", []).append(
+                            {
+                                **item,
+                                "reason": (
+                                    f'AI judged this built for "{result["country_scope"]}"'
+                                ),
+                                "country": result["country_scope"],
+                                "term": result["country_scope"],
+                                "field": "ai_country_scope",
+                                "source": "ai",
+                            }
+                        )
+
+                    self.async_update_listeners()
+            finally:
+                self.new_items_ai_in_progress = False
+                self.new_items_ai_last_run = dt_util.utcnow().isoformat()
+                await self.new_items_registry.async_save()
+                self.async_update_listeners()
+
+        return counts
+
+    async def _async_categorise_new_item(
+        self, item: dict[str, Any], ai_entity: str
+    ) -> dict[str, Any] | None:
+        """Run a single new HACS item through the AI Task; return a verdict.
+
+        Patterned on ``_async_categorise_one``'s structured-then-text fallback
+        and its reuse of the ``_ai_structured_ok`` backend-capability probe —
+        but does not open a new HTTP client or fall back to
+        ``conversation.process``; it reuses ``_async_ai_call`` exactly. Unlike
+        ``_async_categorise_one``, a response that merely parses to 'Other' or
+        a blank country scope still counts as success (so junk is cached as
+        'Other', never retried forever) — only an exception from the service
+        call itself (timeout, missing entity, provider error) returns
+        ``None``, leaving the item ``ai_pending`` for the next cycle.
+        """
+        name = item.get("name", "")
+        description = item.get("description") or ""
+        topics = ", ".join(item.get("topics") or [])
+
+        base = (
+            "A Home Assistant HACS store listing is being triaged for a "
+            "'New in HACS' review card.\n"
+            f"Name: {name}\n"
+            f"Repository: {item.get('full_name', '')}\n"
+            f"Kind: {item.get('kind', '')}\n"
+            f"Description: {description or '(none provided)'}\n"
+            f"Topics: {topics or '(none)'}\n\n"
+            "Choose the single category that best fits, using one of these "
+            "labels exactly (do not invent new ones): "
+            f"{', '.join(NEW_ITEM_CATEGORY_OPTIONS)}. "
+            "Use 'Other' only when nothing else fits.\n"
+            "Then say whether this is built for use in one particular "
+            "country (e.g. a national postal service, a local utility or "
+            "transit authority) — if so, name that country; otherwise say "
+            "'global'."
+        )
+        json_suffix = (
+            "\n\nRespond with ONLY a JSON object, no prose, exactly:\n"
+            '{"category": "...", "country_scope": "..."}'
+        )
+        structure = {
+            "category": {
+                "description": "The single best-fitting category",
+                "required": True,
+                "selector": {
+                    "select": {
+                        "multiple": False,
+                        "options": NEW_ITEM_CATEGORY_OPTIONS,
+                    }
+                },
+            },
+            "country_scope": {
+                "description": (
+                    "The single country this item is built for, or 'global' "
+                    "if it isn't country-specific"
+                ),
+                "required": True,
+                "selector": {"text": {}},
+            },
+        }
+        last_err: Exception | None = None
+
+        if self._ai_structured_ok is not False:
+            try:
+                data = await self._async_ai_call(ai_entity, base, structure)
+                self._ai_structured_ok = True
+                self._new_items_ai_last_error = None
+                return self._parse_new_item_ai_data(data)
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError as err:
+                # A slow response says nothing about structured-output
+                # support — don't latch it off over one hiccup (#91/#95).
+                last_err = err
+            except Exception as err:
+                last_err = err
+                self._ai_structured_ok = False
+
+        try:
+            text = await self._async_ai_call(ai_entity, base + json_suffix, None)
+            self._new_items_ai_last_error = None
+            return self._parse_new_item_ai_text(text)
+        except Exception as err:
+            last_err = err
+
+        self._note_new_items_ai_error(name, last_err)
+        return None
+
+    def _parse_new_item_ai_data(self, data: Any) -> dict[str, Any]:
+        """Parse a structured ai_task result for a new item (#95).
+
+        Deliberately never returns ``None`` — unlike ``_parse_ai_data``. An
+        unparseable or unrecognised answer maps to
+        :data:`NEW_ITEM_CATEGORY_FALLBACK` so a reachable-but-junk model
+        response still yields a cached, displayable verdict instead of
+        leaving the item pending forever.
+        """
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (ValueError, TypeError):
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {
+            "category": self._normalise_new_item_category(data.get("category")),
+            "country_scope": self._clean_country_scope(data.get("country_scope")),
+        }
+
+    def _parse_new_item_ai_text(self, text: Any) -> dict[str, Any]:
+        """Parse a plain-text ai_task result, extracting an embedded JSON object.
+
+        Like :meth:`_parse_new_item_ai_data`, always returns a dict.
+        """
+        obj: dict[str, Any] = {}
+        if isinstance(text, str) and text.strip():
+            match = re.search(r"\{.*\}", text, re.S)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, dict):
+                        obj = parsed
+                except (ValueError, TypeError):
+                    pass
+        return {
+            "category": self._normalise_new_item_category(obj.get("category")),
+            "country_scope": self._clean_country_scope(obj.get("country_scope")),
+        }
+
+    @staticmethod
+    def _clean_country_scope(raw: Any) -> str | None:
+        """Normalise an AI-reported country scope; blank/global-ish -> None."""
+        text = str(raw or "").strip()
+        if not text or text.lower() in (
+            "global",
+            "none",
+            "n/a",
+            "na",
+            "worldwide",
+            "international",
+            "all",
+            "any",
+        ):
+            return None
+        return text
+
+    @staticmethod
+    def _normalise_new_item_category(raw: Any) -> str:
+        """Map a model's free-form category onto the New-in-HACS category set (#95)."""
+        key = str(raw or "").strip().lower()
+        if not key:
+            return NEW_ITEM_CATEGORY_FALLBACK
+        canon_by_lower = {c.lower(): c for c in NEW_ITEM_CATEGORY_OPTIONS}
+        return (
+            canon_by_lower.get(key)
+            or NEW_ITEM_CATEGORY_ALIASES.get(key)
+            or NEW_ITEM_CATEGORY_FALLBACK
+        )
+
+    def _note_new_items_ai_error(self, name: str, err: Exception | None) -> None:
+        """Log a deduped, actionable warning when new-items categorisation fails."""
+        msg = str(err) if err else "no usable response"
+        _LOGGER.debug("New-items AI categorisation failed for %s: %s", name, msg)
+        if msg != self._new_items_ai_last_error:
+            self._new_items_ai_last_error = msg
+            ent = self.entry.options.get(CONF_AI_TASK_ENTITY) if self.entry else "?"
+            _LOGGER.warning(
+                "New-items AI categorisation via '%s' failed (%s). Affected "
+                "items will stay pending and retry next cycle.",
+                ent,
+                msg,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Sensor descriptions
@@ -2321,10 +2959,12 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["coordinator"] = coordinator
 
-    entities = [
+    entities: list[CoordinatorEntity] = [
         CustomComponentMonitorSensor(coordinator, desc)
         for desc in SENSOR_DESCRIPTIONS
     ]
+    if config_entry.options.get(CONF_NEW_ITEMS_ENABLED) is not False:
+        entities.append(HacsNewItemsSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -2425,4 +3065,110 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
         if "last_scan" in self.coordinator.data:
             attrs["last_scan"] = self.coordinator.data["last_scan"]
 
+        return attrs
+
+
+# ---------------------------------------------------------------------------
+# New in HACS sensor (#95)
+# ---------------------------------------------------------------------------
+
+
+class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
+    """New, not-yet-installed HACS repositories, triaged for review (#95).
+
+    A dedicated class rather than another branch in
+    ``CustomComponentMonitorSensor``'s dict-dispatch: that sensor's
+    ``if key == ...`` ladder is built around the used/unused shape shared by
+    the first four sensors, and grafting the by-category/hidden/dismissed
+    shape onto it would make both harder to follow. ``_attr_*`` class
+    attributes stand in for a ``SensorEntityDescription`` for the same
+    reason — this entity's state and attributes don't come from the shared
+    description list at all.
+    """
+
+    _attr_name = "HACS New Items"
+    _attr_icon = "mdi:new-box"
+    _attr_native_unit_of_measurement = "items"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _unrecorded_attributes = frozenset({ATTR_ITEMS, ATTR_HIDDEN})
+
+    def __init__(self, coordinator: CustomComponentMonitorCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{SENSOR_NEW_ITEMS}"
+
+    @property
+    def _new_items(self) -> dict[str, Any]:
+        return (self.coordinator.data or {}).get("new_items") or {}
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of visible (not hidden, not dismissed) new items."""
+        return len(self._new_items.get("items", []))
+
+    @staticmethod
+    def _newest_first(item: dict[str, Any]) -> tuple[int, int]:
+        """Sort key for choosing which rows survive the cap: newest, then popular.
+
+        The card re-sorts whatever it is given, so this only decides *which*
+        rows are published when there are more than the cap allows. Newest
+        first is the right bias for a review queue, and stars break the tie on
+        a day when fifty things arrive at once.
+        """
+        return (item.get("age_days") or 0, -(item.get("stars") or 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return state attributes.
+
+        ``items`` and ``hidden`` are capped here (see
+        :data:`NEW_ITEMS_MAX_EXPOSED`). The state itself, ``total_new``,
+        ``hidden_count`` and ``dismissed_count`` all keep counting the full
+        set, and the two ``*_truncated`` attributes say how much was held
+        back — so the numbers on screen stay true even when the list is
+        shortened. ``by_category`` is deliberately computed over the
+        *published* rows, so a group header never promises a row the card was
+        never given.
+        """
+        data = self._new_items
+        all_items: list[dict[str, Any]] = data.get("items", [])
+        all_hidden: list[dict[str, Any]] = data.get("hidden", [])
+
+        items = all_items
+        if len(all_items) > NEW_ITEMS_MAX_EXPOSED:
+            items = sorted(all_items, key=self._newest_first)[:NEW_ITEMS_MAX_EXPOSED]
+        hidden = all_hidden
+        if len(all_hidden) > NEW_ITEMS_MAX_EXPOSED_HIDDEN:
+            hidden = sorted(all_hidden, key=self._newest_first)[
+                :NEW_ITEMS_MAX_EXPOSED_HIDDEN
+            ]
+
+        by_category: dict[str, int] = {}
+        for item in items:
+            category = item.get("category", NEW_ITEM_CATEGORY_FALLBACK)
+            by_category[category] = by_category.get(category, 0) + 1
+
+        attrs: dict[str, Any] = {
+            ATTR_ITEMS: items,
+            ATTR_BY_CATEGORY: by_category,
+            ATTR_HIDDEN: hidden,
+            ATTR_HIDDEN_COUNT: len(all_hidden),
+            ATTR_ITEMS_TRUNCATED: len(all_items) - len(items),
+            ATTR_HIDDEN_TRUNCATED: len(all_hidden) - len(hidden),
+            ATTR_DISMISSED_COUNT: data.get("dismissed_count", 0),
+            ATTR_TOTAL_NEW: data.get("total_new", 0),
+            ATTR_HOME_COUNTRY: (self.coordinator.data or {}).get(
+                "new_items_home_country"
+            ),
+            ATTR_AI_ENABLED: self.coordinator.ai_enabled,
+            # Counted over the full set, not the published slice: this drives
+            # the card's "27 still being sorted" line, which is about the
+            # backlog, not about what fitted in the attributes.
+            ATTR_AI_PENDING: sum(1 for item in all_items if item.get("ai_pending")),
+            ATTR_AI_IN_PROGRESS: self.coordinator.new_items_ai_in_progress,
+            ATTR_AI_LAST_ERROR: self.coordinator.new_items_ai_last_error,
+            ATTR_AI_LAST_RUN: self.coordinator.new_items_ai_last_run,
+        }
+        if self.coordinator.data and "last_scan" in self.coordinator.data:
+            attrs["last_scan"] = self.coordinator.data["last_scan"]
         return attrs

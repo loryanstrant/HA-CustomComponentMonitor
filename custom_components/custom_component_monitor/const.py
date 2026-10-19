@@ -141,3 +141,184 @@ UAT_CARD_BASE_PATH = f"/local/{DOMAIN}/{UAT_CARD_JS}"
 # --- Recently installed but unused card ---
 RIU_CARD_JS = "recently-installed-unused-card.js"
 RIU_CARD_BASE_PATH = f"/local/{DOMAIN}/{RIU_CARD_JS}"
+
+# --- New in HACS (#95) ---
+# HACS flags freshly indexed repositories with ``new: true`` in its own
+# snapshot. Every existing scanner here filters on ``installed``; this one
+# deliberately does the opposite, so the card can triage what has just arrived
+# in the store rather than what is already on disk.
+SENSOR_NEW_ITEMS = "new_items"
+NEW_ITEMS_CARD_JS = "hacs-new-items-card.js"
+NEW_ITEMS_CARD_BASE_PATH = f"/local/{DOMAIN}/{NEW_ITEMS_CARD_JS}"
+
+# Attributes on sensor.hacs_new_items
+ATTR_ITEMS = "items"
+ATTR_BY_CATEGORY = "by_category"
+ATTR_HIDDEN = "hidden"
+ATTR_HIDDEN_COUNT = "hidden_count"
+ATTR_DISMISSED_COUNT = "dismissed_count"
+ATTR_TOTAL_NEW = "total_new"
+ATTR_HOME_COUNTRY = "home_country"
+# How many items/hidden rows were held back by the caps below, so the card can
+# say "showing 300 of 2,049" rather than quietly lying about the count.
+ATTR_ITEMS_TRUNCATED = "items_truncated"
+ATTR_HIDDEN_TRUNCATED = "hidden_truncated"
+
+# Options
+CONF_NEW_ITEMS_ENABLED = "new_items_enabled"
+CONF_AUTO_HIDE_FOREIGN = "auto_hide_foreign"
+CONF_HOME_COUNTRY = "home_country"
+CONF_EXTRA_HOME_TERMS = "extra_home_terms"
+CONF_NEW_ITEMS_MAX_AI_PER_CYCLE = "new_items_max_ai_per_cycle"
+
+NEW_ITEMS_STORAGE_KEY = "custom_component_monitor.new_items"
+NEW_ITEMS_STORAGE_VERSION = 1
+# HACS clears its own ``new`` flag — the panel has a "clear all new" action and
+# some HACS upgrades reset it wholesale. Treating ``new: true`` as the sole
+# definition would empty this card the first time the HACS panel is opened, so
+# an item first seen inside this window still counts as new.
+NEW_ITEMS_WINDOW_DAYS = 30
+# A repository must be absent from the HACS snapshot for this long before its
+# ``seen``/``ai`` records are pruned. The snapshot lags and flaps (same reason
+# as INSTALL_DATES_GRACE_DAYS). Dismissals are never pruned.
+NEW_ITEMS_GRACE_DAYS = 45
+NEW_ITEMS_MAX_ENTRIES = 2000
+NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE = 10
+DEFAULT_HOME_COUNTRY = "AU"
+# How many rows the sensor publishes in its attributes. This is NOT a cap on
+# the scan: the coordinator keeps the full lists, so dismissing a whole
+# category still acts on every match. It caps only what crosses the websocket.
+#
+# Measured, not guessed: a HACS store with 2,240 repositories flagged new put
+# 1.2 MB into this one entity's attributes, and that payload is re-sent to
+# every connected dashboard on every refresh. The recorder is already spared
+# via ``_unrecorded_attributes``; the frontend is not. 300 rows is ~160 KB and
+# comfortably more than anyone reviews in a sitting, and the card shows how
+# many are held back.
+NEW_ITEMS_MAX_EXPOSED = 300
+NEW_ITEMS_MAX_EXPOSED_HIDDEN = 100
+
+# Categorisation of *store* items. Deliberately a different set from
+# AI_CATEGORY_OPTIONS above, which categorises release notes — do not conflate
+# the two. Held alphabetically because that is the order the card renders in;
+# "Other" is pinned last by NEW_ITEM_CATEGORY_FALLBACK rather than sorted.
+NEW_ITEM_CATEGORY_OPTIONS = [
+    "Appliances",
+    "Climate & heating",
+    "Dashboard & theming",
+    "Energy & solar",
+    "Health & fitness",
+    "Lighting",
+    "Media & audio",
+    "Network & infrastructure",
+    "Notifications & voice",
+    "Presence & location",
+    "Security & cameras",
+    "Tasks & calendar",
+    "Transport & travel",
+    "Vehicles & EV",
+    "Weather & environment",
+    "Other",
+]
+NEW_ITEM_CATEGORY_FALLBACK = "Other"
+# A local 9B model returns near-misses rather than the exact option string, so
+# map the forms seen in practice back onto the canonical set (same approach as
+# AI_CATEGORY_ALIASES).
+NEW_ITEM_CATEGORY_ALIASES = {
+    "appliance": "Appliances",
+    "appliances": "Appliances",
+    "kitchen": "Appliances",
+    "laundry": "Appliances",
+    "vacuum": "Appliances",
+    "climate": "Climate & heating",
+    "climate & heating": "Climate & heating",
+    "heating": "Climate & heating",
+    "hvac": "Climate & heating",
+    "cooling": "Climate & heating",
+    "thermostat": "Climate & heating",
+    "dashboard": "Dashboard & theming",
+    "dashboard & theming": "Dashboard & theming",
+    "theme": "Dashboard & theming",
+    "themes": "Dashboard & theming",
+    "theming": "Dashboard & theming",
+    "ui": "Dashboard & theming",
+    "frontend": "Dashboard & theming",
+    "energy": "Energy & solar",
+    "energy & solar": "Energy & solar",
+    "solar": "Energy & solar",
+    "power": "Energy & solar",
+    "electricity": "Energy & solar",
+    "battery": "Energy & solar",
+    "health": "Health & fitness",
+    "health & fitness": "Health & fitness",
+    "fitness": "Health & fitness",
+    "wellbeing": "Health & fitness",
+    "light": "Lighting",
+    "lights": "Lighting",
+    "lighting": "Lighting",
+    "media": "Media & audio",
+    "media & audio": "Media & audio",
+    "audio": "Media & audio",
+    "music": "Media & audio",
+    "tv": "Media & audio",
+    "network": "Network & infrastructure",
+    "network & infrastructure": "Network & infrastructure",
+    "infrastructure": "Network & infrastructure",
+    "system": "Network & infrastructure",
+    "router": "Network & infrastructure",
+    "nas": "Network & infrastructure",
+    "notifications": "Notifications & voice",
+    "notifications & voice": "Notifications & voice",
+    "notification": "Notifications & voice",
+    "voice": "Notifications & voice",
+    "tts": "Notifications & voice",
+    "assistant": "Notifications & voice",
+    "presence": "Presence & location",
+    "presence & location": "Presence & location",
+    "location": "Presence & location",
+    "tracking": "Presence & location",
+    "device tracker": "Presence & location",
+    "security": "Security & cameras",
+    "security & cameras": "Security & cameras",
+    "camera": "Security & cameras",
+    "cameras": "Security & cameras",
+    "alarm": "Security & cameras",
+    "lock": "Security & cameras",
+    "doorbell": "Security & cameras",
+    "tasks": "Tasks & calendar",
+    "tasks & calendar": "Tasks & calendar",
+    "task": "Tasks & calendar",
+    "todo": "Tasks & calendar",
+    "to-do": "Tasks & calendar",
+    "calendar": "Tasks & calendar",
+    "chores": "Tasks & calendar",
+    "transport": "Transport & travel",
+    "transport & travel": "Transport & travel",
+    "transit": "Transport & travel",
+    "travel": "Transport & travel",
+    "public transport": "Transport & travel",
+    "flights": "Transport & travel",
+    "vehicle": "Vehicles & EV",
+    "vehicles": "Vehicles & EV",
+    "vehicles & ev": "Vehicles & EV",
+    "car": "Vehicles & EV",
+    "cars": "Vehicles & EV",
+    "ev": "Vehicles & EV",
+    "charging": "Vehicles & EV",
+    "weather": "Weather & environment",
+    "weather & environment": "Weather & environment",
+    "environment": "Weather & environment",
+    "air quality": "Weather & environment",
+    "forecast": "Weather & environment",
+    "other": "Other",
+    "misc": "Other",
+    "miscellaneous": "Other",
+    "general": "Other",
+    "unknown": "Other",
+}
+# Bumping this invalidates every cached AI verdict on purpose.
+NEW_ITEM_AI_PROMPT_VERSION = 1
+
+SERVICE_DISMISS_NEW_ITEMS = "dismiss_new_items"
+SERVICE_RESTORE_NEW_ITEMS = "restore_new_items"
+SERVICE_CATEGORISE_NEW_ITEMS = "categorise_new_items"

@@ -32,6 +32,13 @@ group the remainder by what it actually does, and dismiss a whole group in one t
 | Categorisation | **Local AI for every item** (country rules pre-filter so hidden items cost no inference) | Rules-first hybrid; rules only |
 | Where it lives | **A new fourth card** | A section inside the existing update card |
 | Country matching | Must handle short forms **AU / AUS / Aus / Oz** case-sensitively; collision-prone ISO codes blocklisted | Full country names only |
+| Group order | **Alphabetical by category name**, with `Other` always pinned last | Newest-first; busiest-group-first |
+| Kind filter | **All / Integrations / Cards**, reusing the filter control the existing cards already use | No kind filter; two separate cards |
+
+Added after the mockup review on 2026-10-20, in the owner's words: *"have the categories
+listed alphabetically, and the ability to filter by card/integration/all (like the solution
+currently does)."* The filter is not a new control — it is the same chip row the update
+tracker card already ships, relabelled to the two kinds this entity carries.
 
 ## Flow
 
@@ -50,13 +57,17 @@ group the remainder by what it actually does, and dismiss a whole group in one t
 ### Reviewing
 
 1. The card shows `New in HACS — 83 to review · 37 hidden`, one collapsible group per
-   category, newest first by default.
-2. A row carries: name, kind (Integration / Card), stars, downloads, age, a two-line
+   category, **in alphabetical order with `Other` last**. Items within a group are newest
+   first by default.
+2. An `All` / `Integrations` / `Cards` chip row sits under the header. It filters the rows
+   and the per-group counts; a group that empties under the filter disappears rather than
+   showing a zero.
+3. A row carries: name, kind (Integration / Card), stars, downloads, age, a two-line
    description, a tick box, a link to GitHub and a single-item dismiss.
-3. Ticking rows reveals `Dismiss N selected`. A group header carries `Dismiss all (n)`.
-4. `Show hidden (37)` opens the audit list; each row states why it was hidden
+4. Ticking rows reveals `Dismiss N selected`. A group header carries `Dismiss all (n)`.
+5. `Show hidden (37)` opens the audit list; each row states why it was hidden
    (*matched "sweden" in description*) and offers **Restore**.
-5. Restoring a country-hidden item also adds it to a never-hide list, so the rule cannot
+6. Restoring a country-hidden item also adds it to a never-hide list, so the rule cannot
    hide it again.
 
 ### Afterwards
@@ -82,13 +93,17 @@ flag. The dismiss list is kept indefinitely.
 | A12 | The card's settings panel is built on `ha-form`, matching the three rebuilt in 1.14.0 | Follows `docs/specs/card-editor-ha-form.md` |
 | A13 | Version is bumped in lockstep: `manifest.json` plus all four cards' `CARD_VERSION` | Release gate |
 | A14 | HACS clearing its own `new` flag does not empty the card | Scanner treats `new: true` **or** first-seen within a 30-day window as new |
+| A15 | Category groups render alphabetically, with `Other` last regardless of alphabet | Card unit check + screenshot |
+| A16 | `All` / `Integrations` / `Cards` filters the rows and the group counts, using the same chip control the existing cards use | Screenshot of each filter state; code reuses the existing `.filters`/`.chip` idiom |
 
 ## Category set
 
-Weather & environment · Energy & solar · Lighting · Climate & heating · Security & cameras ·
-Media & audio · Vehicles & EV · Appliances · Presence & location · Network & infrastructure ·
-Tasks & calendar · Health & fitness · Transport & travel · Notifications & voice ·
-Dashboard & theming · Other
+Held and displayed alphabetically, with `Other` pinned last:
+
+Appliances · Climate & heating · Dashboard & theming · Energy & solar · Health & fitness ·
+Lighting · Media & audio · Network & infrastructure · Notifications & voice ·
+Presence & location · Security & cameras · Tasks & calendar · Transport & travel ·
+Vehicles & EV · Weather & environment · **Other**
 
 This set is **separate** from the existing `AI_CATEGORY_OPTIONS` used for release-note
 categorisation (Bug fixes / New features / …) and must not be conflated with it.

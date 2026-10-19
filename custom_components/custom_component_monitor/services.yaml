@@ -80,3 +80,118 @@ generate_summaries:
           min: 1
           max: 100
           mode: box
+
+dismiss_new_items:
+  name: "Dismiss new HACS items"
+  description: >-
+    Dismiss one or more items from the "New in HACS" review card. Give
+    exactly one of repositories, category or all — it acts on whatever
+    sensor.hacs_new_items is currently showing as new.
+  fields:
+    repositories:
+      name: "Repositories"
+      description: >-
+        Dismiss these repositories (owner/repo, e.g.
+        "home-assistant/core"). Only ones currently shown as new are
+        affected — anything else is ignored.
+      selector:
+        text:
+          multiple: true
+    category:
+      name: "Category"
+      description: Dismiss every currently-shown new item in this category.
+      selector:
+        select:
+          options:
+            - "Appliances"
+            - "Climate & heating"
+            - "Dashboard & theming"
+            - "Energy & solar"
+            - "Health & fitness"
+            - "Lighting"
+            - "Media & audio"
+            - "Network & infrastructure"
+            - "Notifications & voice"
+            - "Presence & location"
+            - "Security & cameras"
+            - "Tasks & calendar"
+            - "Transport & travel"
+            - "Vehicles & EV"
+            - "Weather & environment"
+            - "Other"
+    all:
+      name: "All"
+      description: Dismiss every currently-shown new item.
+      selector:
+        boolean:
+
+restore_new_items:
+  name: "Restore new HACS items"
+  description: >-
+    Bring back items previously dismissed or auto-hidden on the "New in
+    HACS" review card. Give exactly one of repositories, category or all.
+    An item restored from auto-hide is also marked "never hide again", so
+    the country rule can't immediately hide it a second time.
+  fields:
+    repositories:
+      name: "Repositories"
+      description: >-
+        Restore these repositories (owner/repo). One that isn't currently
+        dismissed or hidden is ignored.
+      selector:
+        text:
+          multiple: true
+    category:
+      name: "Category"
+      description: Restore every hidden or dismissed item in this category.
+      selector:
+        select:
+          options:
+            - "Appliances"
+            - "Climate & heating"
+            - "Dashboard & theming"
+            - "Energy & solar"
+            - "Health & fitness"
+            - "Lighting"
+            - "Media & audio"
+            - "Network & infrastructure"
+            - "Notifications & voice"
+            - "Presence & location"
+            - "Security & cameras"
+            - "Tasks & calendar"
+            - "Transport & travel"
+            - "Vehicles & EV"
+            - "Weather & environment"
+            - "Other"
+    all:
+      name: "All"
+      description: Restore every hidden and dismissed item.
+      selector:
+        boolean:
+
+categorise_new_items:
+  name: "Categorise new HACS items"
+  description: >-
+    Run AI categorisation for pending items on the "New in HACS" review
+    card. Only items without a cached category are processed unless
+    "Force" is enabled. Requires AI summaries to be enabled in the
+    integration options.
+  fields:
+    max_items:
+      name: "Maximum items"
+      description: >-
+        Stop after this many AI calls. Omit to use the "Maximum AI
+        categorisations per cycle" option.
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+    force:
+      name: "Force"
+      description: >-
+        Re-categorise even items that already have a cached AI category,
+        ignoring the cache. Costs one AI call per item.
+      default: false
+      selector:
+        boolean:
