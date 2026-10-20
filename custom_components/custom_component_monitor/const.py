@@ -26,6 +26,11 @@ ATTR_AI_PENDING = "ai_pending"
 ATTR_AI_IN_PROGRESS = "ai_in_progress"
 ATTR_AI_LAST_ERROR = "ai_last_error"
 ATTR_AI_LAST_RUN = "ai_last_run"
+# Observed throughput of the New-in-HACS categorisation loop, and what it
+# implies for the backlog (#95 / v1.15.1). Both are null until a batch has
+# actually run, because they are measurements and not estimates.
+ATTR_AI_RATE_PER_MINUTE = "ai_rate_per_minute"
+ATTR_AI_ETA_SECONDS = "ai_eta_seconds"
 # When exact install-date tracking began, surfaced on
 # sensor.hacs_installed_components so the card can explain its "~" marks (#93)
 ATTR_INSTALL_DATES_SINCE = "install_dates_since"
@@ -169,7 +174,11 @@ CONF_NEW_ITEMS_ENABLED = "new_items_enabled"
 CONF_AUTO_HIDE_FOREIGN = "auto_hide_foreign"
 CONF_HOME_COUNTRY = "home_country"
 CONF_EXTRA_HOME_TERMS = "extra_home_terms"
+# Retired in v1.15.1 in favour of CONF_NEW_ITEMS_AI_BUDGET_SECONDS. Kept
+# defined because old config entries still carry the key: nothing reads it any
+# more, and the next options save drops it.
 CONF_NEW_ITEMS_MAX_AI_PER_CYCLE = "new_items_max_ai_per_cycle"
+CONF_NEW_ITEMS_AI_BUDGET_SECONDS = "new_items_ai_budget_seconds"
 
 NEW_ITEMS_STORAGE_KEY = "custom_component_monitor.new_items"
 NEW_ITEMS_STORAGE_VERSION = 1
@@ -183,8 +192,72 @@ NEW_ITEMS_WINDOW_DAYS = 30
 # as INSTALL_DATES_GRACE_DAYS). Dismissals are never pruned.
 NEW_ITEMS_GRACE_DAYS = 45
 NEW_ITEMS_MAX_ENTRIES = 2000
+# Retired in v1.15.1 alongside CONF_NEW_ITEMS_MAX_AI_PER_CYCLE. See the
+# adaptive pacing block below for what replaced it and why.
 NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE = 10
 DEFAULT_HOME_COUNTRY = "AU"
+
+# --- Adaptive AI categorisation pacing (v1.15.1) ---------------------------
+#
+# v1.15.0 sent a fixed 10 items per hourly scan. That number is blind to the
+# hardware underneath it, and measuring the real thing showed how blind:
+# against a local Qwen3.5-9B each item took 0.40-0.48 s, so a cycle did ~4.5 s
+# of work and then waited 59 minutes 55 s. A 200-item HACS drop — which is how
+# HACS actually behaves, quiet for a month and then several hundred in a few
+# days — took close to a day to sort, and the card sat on "177 still being
+# sorted" the whole time.
+#
+# Raising the number would only move the wrong constant. The pacing is now a
+# *time* budget per pass, a short catch-up pass while work remains, and a
+# self-tuning number of concurrent calls: fast hardware clears the same
+# backlog in minutes, slow hardware settles back to one call at a time, and
+# neither needs the user to pick a number.
+
+# How long one pass may spend on AI calls. Checked *between* waves and never
+# mid-call, so a model slower than the entire budget still completes a wave
+# per pass instead of being cut off and making no progress at all.
+NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS = 20
+NEW_ITEMS_AI_MIN_BUDGET_SECONDS = 5
+NEW_ITEMS_AI_MAX_BUDGET_SECONDS = 300
+
+# Pause between a pass that ran out of budget and the catch-up pass after it.
+# Short enough that a 200-item backlog clears in minutes, long enough to give
+# the event loop and the AI backend air between bursts.
+NEW_ITEMS_AI_CATCHUP_SECONDS = 5
+
+# How many items go to the AI at once. Self-tuning: it keeps a measured
+# throughput figure *per wave size* and moves to whichever neighbouring size
+# (double or half) is worth more, trying any size it has never measured. A
+# 16 GB GPU batches happily and walks up to MAX; a CPU-only box measures 1 as
+# its best and stays there. Nothing the user has to pick.
+#
+# Per-size rather than best-ever on purpose. A single "best throughput seen"
+# bar only ever ratchets upwards, so one transient failure at the top size
+# halves the wave and then every smaller — and therefore legitimately slower —
+# wave reads as a regression, walking the size down to 1 with no way back.
+# That is the exact hourly trickle this release exists to remove, so the
+# comparison has to be like-for-like.
+NEW_ITEMS_AI_CONCURRENCY_START = 2
+NEW_ITEMS_AI_CONCURRENCY_MAX = 8
+# A neighbouring size must beat the current one by this factor to be worth
+# moving to. The margin is the hold band that stops the size oscillating on
+# measurement noise once it has converged.
+NEW_ITEMS_AI_GROW_GAIN = 1.05
+# After this many waves with no move, the neighbours' records are forgotten so
+# they get re-measured. Backend load changes — another integration starts
+# hammering the same GPU, or stops — and without this a stale number pins the
+# size for as long as Home Assistant stays up.
+NEW_ITEMS_AI_REPROBE_WAVES = 5
+
+# Consecutive all-failed waves before a pass gives up and leaves the rest to
+# the next hourly scan. Stops a dead AI entity being hammered in a tight
+# catch-up loop.
+NEW_ITEMS_AI_MAX_FAILED_WAVES = 3
+
+# Hard stop on the catch-up chain, in case `remaining` never reaches zero.
+# At the default budget this is many hours of work — it is a backstop against
+# a logic error, not a pacing control.
+NEW_ITEMS_AI_MAX_PASSES = 500
 # How many rows the sensor publishes in its attributes. This is NOT a cap on
 # the scan: the coordinator keeps the full lists, so dismissing a whole
 # category still acts on every match. It caps only what crosses the websocket.

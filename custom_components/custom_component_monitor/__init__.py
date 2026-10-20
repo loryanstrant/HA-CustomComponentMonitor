@@ -71,9 +71,20 @@ NEW_ITEMS_SELECTOR_SCHEMA = vol.Schema(
     }
 )
 
+# Both caps are optional and both are escape hatches rather than settings
+# (v1.15.1): left alone, the service runs one pass at the configured time
+# budget and then keeps going in the background until the backlog is clear,
+# which is what the automatic path does too. ``max_items`` exists for
+# "categorise just these few now"; ``max_seconds`` for "don't tie up the AI
+# for longer than this".
 SERVICE_CATEGORISE_NEW_ITEMS_SCHEMA = vol.Schema(
     {
-        vol.Optional("max_items"): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        vol.Optional("max_items"): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=2000)
+        ),
+        vol.Optional("max_seconds"): vol.All(
+            vol.Coerce(float), vol.Range(min=1, max=600)
+        ),
         vol.Optional("force", default=False): cv.boolean,
     }
 )
@@ -529,23 +540,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "conversation entity first."
                 )
             force = call.data.get("force", False)
-            if force and coordinator.data:
-                # Two things have to give way for a forced re-run: the
-                # coordinator's in-memory flag (what the batch runner queues
-                # on) and the registry's cached verdict (what it would hand
-                # back instead of calling the model). Dropping both means a
-                # forced call that fails retries next cycle rather than
-                # quietly reverting to the category being replaced.
-                registry = coordinator.new_items_registry
-                for item in (
-                    coordinator.data.get("new_items") or {}
-                ).get("items", []) or []:
-                    item["ai_pending"] = True
-                    registry.clear_ai(item["full_name"])
-                await registry.async_save()
-            return await coordinator.async_generate_new_item_categories(
-                limit=call.data.get("max_items")
+            if force:
+                # Done by the coordinator, under its categorisation lock, so a
+                # forced call that lands while the background catch-up chain
+                # is mid-pass waits for that pass instead of reverting items
+                # it has already finished. See
+                # ``async_reset_new_items_ai_cache``.
+                await coordinator.async_reset_new_items_ai_cache()
+            counts = await coordinator.async_generate_new_item_categories(
+                limit=call.data.get("max_items"),
+                max_seconds=call.data.get("max_seconds"),
             )
+            # One pass is bounded by the time budget, so a big backlog will
+            # still have items left when it returns. Hand the rest to the
+            # background catch-up chain instead of making the caller loop
+            # (v1.15.1) — unless they asked for a bounded slice, in which case
+            # finishing the whole backlog is not what they asked for.
+            if (
+                counts.get("remaining", 0) > 0
+                and counts.get("generated", 0) > 0
+                and call.data.get("max_items") is None
+            ):
+                coordinator.async_schedule_new_items_ai_run()
+            return counts
 
         hass.services.async_register(
             DOMAIN,

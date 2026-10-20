@@ -408,11 +408,11 @@ async def test_categorise_invokes_the_batch_runner_with_max_items(setup_integrat
             return_response=True,
         )
 
-    runner.assert_awaited_once_with(limit=7)
+    runner.assert_awaited_once_with(limit=7, max_seconds=None)
     assert response == {"generated": 1, "failed": 0, "skipped": 0, "remaining": 0}
 
 
-async def test_categorise_without_max_items_uses_the_coordinator_default(
+async def test_categorise_without_arguments_uses_the_configured_time_budget(
     setup_integration,
 ):
     hass, _entry = setup_integration
@@ -430,7 +430,7 @@ async def test_categorise_without_max_items_uses_the_coordinator_default(
             return_response=True,
         )
 
-    runner.assert_awaited_once_with(limit=None)
+    runner.assert_awaited_once_with(limit=None, max_seconds=None)
 
 
 async def test_categorise_force_marks_every_visible_item_ai_pending_first(
@@ -448,7 +448,7 @@ async def test_categorise_force_marks_every_visible_item_ai_pending_first(
 
     captured: dict[str, list[bool]] = {}
 
-    async def _capture(*, limit=None):
+    async def _capture(*, limit=None, max_seconds=None):
         captured["pending"] = [
             item["ai_pending"] for item in coordinator.data["new_items"]["items"]
         ]

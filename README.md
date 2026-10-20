@@ -483,6 +483,33 @@ The sensor state is the number of visible (not hidden, not dismissed) new items.
 - `ai_in_progress` — true while a categorisation batch is running
 - `ai_last_error` — the last AI failure message, or null when the last run was clean
 - `ai_last_run` — timestamp of the last categorisation run
+- `ai_rate_per_minute` — measured sorting throughput, in items per minute, or `null` before the first successful wave
+- `ai_eta_seconds` — estimated seconds until `ai_pending` reaches zero at the measured rate, or `null` when there is nothing pending or no measurement yet
+
+#### How fast the sorting runs
+
+Sorting paces itself against your AI, not against a fixed item count (v1.15.1+). Each pass
+sends a small wave of items, times it, and then decides what to do next:
+
+- it remembers how many items per second it achieved **at each wave size** it has tried;
+- a size it has never tried gets one wave to prove itself, up to 8 items at once;
+- it then settles on whichever size measured best — bigger if bigger was faster, smaller if your
+  AI handles one-at-a-time better than batches;
+- any failure in a wave **halves** it immediately, so a struggling backend is backed off rather
+  than hammered — and once things are working again the size climbs back by itself;
+- after a stretch with no change it re-tries the sizes either side, because a measurement taken
+  while the GPU was busy shouldn't hold forever.
+
+A pass stops when it has spent its **AI sorting time per pass** budget (default 20 seconds,
+settable 5–300 in the options), waits five seconds, and then starts the next pass — repeating
+until nothing is left to sort. The first wave of a pass always runs to completion even if it
+overruns the budget, so a model slower than the whole budget still makes progress every pass
+instead of stalling forever.
+
+The practical effect: the backlog clears as fast as your hardware allows. A local 9B model
+answering in ~0.45 s per item clears a 177-item backlog in about two minutes. A slow cloud
+model simply takes more passes, at the same five-second spacing, with no configuration change
+and no manual service call.
 
 #### Services
 
@@ -502,11 +529,12 @@ The sensor state is the number of visible (not hidden, not dismissed) new items.
 | `category` | One of | string | Restore every hidden or dismissed item in this category group |
 | `all` | One of | boolean | Restore every hidden and dismissed item |
 
-**`custom_component_monitor.categorise_new_items`** — Manually categorise items (normally done automatically). Requires AI summaries to be enabled in the integration options. Runs in the background; watch the sensor's `ai_pending` and `ai_last_run` attributes for progress.
+**`custom_component_monitor.categorise_new_items`** — Manually categorise items. You should not normally need this: sorting starts by itself after every scan and keeps going until the backlog is clear (see [How fast the sorting runs](#how-fast-the-sorting-runs)). Requires AI summaries to be enabled in the integration options. Runs in the background; watch the sensor's `ai_pending`, `ai_rate_per_minute` and `ai_eta_seconds` attributes for progress.
 
 | Parameter | Required | Type | Description |
 |-----------|----------|------|-------------|
-| `max_items` | No | number | Stop after this many AI calls (1–100). Omit to use the **Maximum AI categorisations per cycle** option |
+| `max_items` | No | number | Sort at most this many items (1–2000) and then stop for good — no background catch-up afterwards. Omit to sort the whole backlog |
+| `max_seconds` | No | number | How long this one pass may spend on AI calls (1–600) before handing the rest to the background catch-up. Omit to use the **AI sorting time per pass** option |
 | `force` | No | boolean | Re-categorise items that already have a cached category. Costs one AI call per item (default `false`) |
 
 #### Country filtering

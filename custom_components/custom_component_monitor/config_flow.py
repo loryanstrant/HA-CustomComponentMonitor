@@ -18,11 +18,13 @@ from .const import (
     CONF_EXCLUDE,
     CONF_EXTRA_HOME_TERMS,
     CONF_HOME_COUNTRY,
+    CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
     CONF_NEW_ITEMS_ENABLED,
-    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
     DEFAULT_HOME_COUNTRY,
     DOMAIN,
-    NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
+    NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS,
+    NEW_ITEMS_AI_MAX_BUDGET_SECONDS,
+    NEW_ITEMS_AI_MIN_BUDGET_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -126,10 +128,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     CONF_HOME_COUNTRY: home_country,
                     CONF_EXTRA_HOME_TERMS: extra_home_terms,
-                    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE: int(
+                    CONF_NEW_ITEMS_AI_BUDGET_SECONDS: int(
                         user_input.get(
-                            CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
-                            NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
+                            CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
+                            NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS,
                         )
                     ),
                 },
@@ -157,8 +159,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if isinstance(current_extra_home_terms, str):
             current_extra_home_terms = [current_extra_home_terms]
         current_extra_home_terms_text = "\n".join(current_extra_home_terms)
-        current_max_ai_per_cycle = self.config_entry.options.get(
-            CONF_NEW_ITEMS_MAX_AI_PER_CYCLE, NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+        # v1.15.1 replaced "how many items per cycle" with "how long per
+        # pass". The old key may still be in this entry's options; it is
+        # ignored, and saving the form drops it.
+        current_ai_budget_seconds = self.config_entry.options.get(
+            CONF_NEW_ITEMS_AI_BUDGET_SECONDS, NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS
         )
 
         # Offer the currently-unused component names as quick-pick options, while
@@ -211,11 +216,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     selector.TextSelectorConfig(multiline=True)
                 ),
                 vol.Optional(
-                    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
-                    default=current_max_ai_per_cycle,
+                    CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
+                    default=current_ai_budget_seconds,
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=1, max=50, mode=selector.NumberSelectorMode.BOX
+                        min=NEW_ITEMS_AI_MIN_BUDGET_SECONDS,
+                        max=NEW_ITEMS_AI_MAX_BUDGET_SECONDS,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
             }
