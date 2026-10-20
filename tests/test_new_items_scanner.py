@@ -25,8 +25,8 @@ from custom_components.custom_component_monitor.const import (
     CONF_AI_TASK_ENTITY,
     CONF_AUTO_HIDE_FOREIGN,
     CONF_HOME_COUNTRY,
+    CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
     CONF_NEW_ITEMS_ENABLED,
-    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
     DEFAULT_HOME_COUNTRY,
     NEW_ITEM_CATEGORY_FALLBACK,
 )
@@ -663,7 +663,7 @@ def make_entry(
     ai_entity: str = "ai_task.test",
     home_country: str = DEFAULT_HOME_COUNTRY,
     auto_hide_foreign: bool = True,
-    max_ai_per_cycle: int = 10,
+    ai_budget_seconds: int = 20,
     new_items_enabled: bool = True,
 ) -> MagicMock:
     entry = MagicMock()
@@ -672,7 +672,7 @@ def make_entry(
         CONF_AI_TASK_ENTITY: ai_entity,
         CONF_HOME_COUNTRY: home_country,
         CONF_AUTO_HIDE_FOREIGN: auto_hide_foreign,
-        CONF_NEW_ITEMS_MAX_AI_PER_CYCLE: max_ai_per_cycle,
+        CONF_NEW_ITEMS_AI_BUDGET_SECONDS: ai_budget_seconds,
         CONF_NEW_ITEMS_ENABLED: new_items_enabled,
     }
     return entry
@@ -708,9 +708,10 @@ def new_items_coordinator(hass: HomeAssistant) -> CustomComponentMonitorCoordina
     return coord
 
 
-async def test_ai_is_called_at_most_max_ai_per_cycle_times(
+async def test_the_max_items_limit_caps_one_pass_and_reports_the_rest(
     new_items_coordinator: CustomComponentMonitorCoordinator,
 ):
+    """``max_items`` is the service's explicit "just these" escape hatch."""
     items = [new_item(f"owner/repo-{i}") for i in range(15)]
     new_items_coordinator.data = {"new_items": {"items": items, "hidden": []}}
     call = AsyncMock(return_value={"category": "Other", "country_scope": "global"})
@@ -723,23 +724,26 @@ async def test_ai_is_called_at_most_max_ai_per_cycle_times(
     assert counts["remaining"] == 10
 
 
-async def test_default_batch_size_comes_from_the_max_ai_per_cycle_option(
-    hass: HomeAssistant,
+async def test_with_no_limit_a_fast_backend_clears_the_whole_backlog_in_one_pass(
+    new_items_coordinator: CustomComponentMonitorCoordinator,
 ):
-    coord = CustomComponentMonitorCoordinator(
-        hass, make_entry(max_ai_per_cycle=3)
-    )
-    coord._ai_loaded = True
-    coord.new_items_registry._loaded = True
-    coord.new_items_registry._store = None
-    items = [new_item(f"owner/repo-{i}") for i in range(7)]
-    coord.data = {"new_items": {"items": items, "hidden": []}}
+    """The v1.15.1 change, stated as a test.
+
+    v1.15.0 stopped after the ``max_ai_per_cycle`` option's worth of items and
+    waited an hour for the next scan. There is no such number any more: the
+    pass runs until the time budget is spent, so a backend that answers
+    instantly finishes the lot and leaves nothing remaining.
+    """
+    items = [new_item(f"owner/repo-{i}") for i in range(37)]
+    new_items_coordinator.data = {"new_items": {"items": items, "hidden": []}}
     call = AsyncMock(return_value={"category": "Other", "country_scope": "global"})
 
-    with patch.object(coord, "_async_ai_call", call):
-        await coord.async_generate_new_item_categories()
+    with patch.object(new_items_coordinator, "_async_ai_call", call):
+        counts = await new_items_coordinator.async_generate_new_item_categories()
 
-    assert call.await_count == 3
+    assert call.await_count == 37
+    assert counts["generated"] == 37
+    assert counts["remaining"] == 0
 
 
 async def test_a_junk_ai_response_yields_other_without_raising(

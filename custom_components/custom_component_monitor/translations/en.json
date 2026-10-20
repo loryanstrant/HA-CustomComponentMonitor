@@ -26,7 +26,7 @@
           "auto_hide_foreign": "Hide new items made for another country",
           "home_country": "Your home country",
           "extra_home_terms": "Extra \"this is my country\" words",
-          "new_items_max_ai_per_cycle": "Maximum AI categorisations per cycle"
+          "new_items_ai_budget_seconds": "AI sorting time per pass"
         },
         "data_description": {
           "exclude": "Components that are actually in use but get flagged as unused. Pick from the currently-unused list, or type a name or domain for anything else.",
@@ -36,7 +36,7 @@
           "auto_hide_foreign": "Hide new items made for another country — e.g. a national postal service or a local utility — instead of showing them mixed in with everything else.",
           "home_country": "Your country code, e.g. AU. Used to tell apart new items made for your own country from ones made for somewhere else.",
           "extra_home_terms": "Extra words that mean \"this is for my country\" — one per line. Use this for anything the country code alone wouldn't catch (a state name, a local brand, a utility).",
-          "new_items_max_ai_per_cycle": "How many new items to send to AI categorisation per scan, at most. Keeps a single scan from queuing up a long run of AI calls."
+          "new_items_ai_budget_seconds": "How long each sorting pass may spend talking to the AI before it pauses and picks up where it left off. Sorting repeats automatically until everything new has been sorted, so this paces the work rather than capping it — the number of items per pass tunes itself to how fast your AI answers."
         }
       }
     }
@@ -151,11 +151,15 @@
     },
     "categorise_new_items": {
       "name": "Categorise new HACS items",
-      "description": "Run AI categorisation for pending items on the \"New in HACS\" review card. Only items without a cached category are processed unless \"Force\" is enabled. Requires AI summaries to be enabled in the integration options.",
+      "description": "Run AI categorisation for pending items on the \"New in HACS\" review card. You should not normally need this: sorting starts by itself after every scan and keeps going until the backlog is clear. Only items without a cached category are processed unless \"Force\" is enabled. Requires AI summaries to be enabled in the integration options.",
       "fields": {
         "max_items": {
           "name": "Maximum items",
-          "description": "Stop after this many AI calls. Omit to use the \"Maximum AI categorisations per cycle\" option."
+          "description": "Sort at most this many items and then stop for good — no background catch-up afterwards. Omit to sort the whole backlog."
+        },
+        "max_seconds": {
+          "name": "Time limit",
+          "description": "How long this one pass may spend on AI calls before handing the rest to the background catch-up. Omit to use the \"AI sorting time per pass\" option."
         },
         "force": {
           "name": "Force",

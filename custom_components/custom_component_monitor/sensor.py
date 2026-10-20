@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import yaml
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -41,10 +42,12 @@ from .const import (
     AI_MAX_ATTEMPTS,
     AI_MAX_PER_SCAN,
     ATTR_AI_ENABLED,
+    ATTR_AI_ETA_SECONDS,
     ATTR_AI_IN_PROGRESS,
     ATTR_AI_LAST_ERROR,
     ATTR_AI_LAST_RUN,
     ATTR_AI_PENDING,
+    ATTR_AI_RATE_PER_MINUTE,
     ATTR_BY_CATEGORY,
     ATTR_CATEGORIES,
     ATTR_COMPONENTS,
@@ -71,15 +74,24 @@ from .const import (
     CONF_EXCLUDE,
     CONF_EXTRA_HOME_TERMS,
     CONF_HOME_COUNTRY,
+    CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
     CONF_NEW_ITEMS_ENABLED,
-    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
     DEFAULT_HOME_COUNTRY,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     NEW_ITEM_CATEGORY_ALIASES,
     NEW_ITEM_CATEGORY_FALLBACK,
     NEW_ITEM_CATEGORY_OPTIONS,
-    NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
+    NEW_ITEMS_AI_CATCHUP_SECONDS,
+    NEW_ITEMS_AI_CONCURRENCY_MAX,
+    NEW_ITEMS_AI_CONCURRENCY_START,
+    NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS,
+    NEW_ITEMS_AI_GROW_GAIN,
+    NEW_ITEMS_AI_MAX_BUDGET_SECONDS,
+    NEW_ITEMS_AI_MAX_FAILED_WAVES,
+    NEW_ITEMS_AI_MAX_PASSES,
+    NEW_ITEMS_AI_MIN_BUDGET_SECONDS,
+    NEW_ITEMS_AI_REPROBE_WAVES,
     NEW_ITEMS_MAX_EXPOSED,
     NEW_ITEMS_MAX_EXPOSED_HIDDEN,
     NEW_ITEMS_WINDOW_DAYS,
@@ -1708,6 +1720,23 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._new_items_ai_last_error: str | None = None
         self._new_items_ai_lock = asyncio.Lock()
         self._new_items_ai_task: asyncio.Task | None = None
+        # Adaptive pacing (v1.15.1). The wave size is how many items go to the
+        # AI at once; it tunes itself against observed throughput, so the same
+        # code clears a 200-item backlog in minutes on a GPU and settles back
+        # to one call at a time on a slow backend. ``_rate`` is an EWMA in
+        # items/second and stays None until a wave has actually completed —
+        # it is a measurement, never an estimate.
+        self._new_items_ai_wave = NEW_ITEMS_AI_CONCURRENCY_START
+        # Throughput per wave size, not a single best-ever figure — see
+        # _adapt_new_items_ai_wave for why that distinction is the whole
+        # difference between a search that recovers and one that pins itself
+        # at one item at a time after a single failure.
+        self._new_items_ai_wave_rates: dict[int, float] = {}
+        self._new_items_ai_wave_holds = 0
+        self._new_items_ai_rate: float | None = None
+        # Work-to-wall-clock ratio of the last completed pass, used for the
+        # ETA. None until a pass has finished.
+        self._new_items_ai_duty: float | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -1762,18 +1791,29 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if isinstance(extra_home_terms, str):
             extra_home_terms = [extra_home_terms]
         auto_hide_foreign = options.get(CONF_AUTO_HIDE_FOREIGN) is not False
-        max_ai_per_cycle = int(
-            options.get(
-                CONF_NEW_ITEMS_MAX_AI_PER_CYCLE, NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+        # A time budget rather than an item count (v1.15.1): a count is blind
+        # to how fast the AI entity actually answers. Clamped rather than
+        # rejected so a hand-edited config entry can't stall the loop.
+        try:
+            budget = float(
+                options.get(
+                    CONF_NEW_ITEMS_AI_BUDGET_SECONDS,
+                    NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS,
+                )
+                or NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS
             )
-            or NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+        except (TypeError, ValueError):
+            budget = float(NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS)
+        budget = max(
+            float(NEW_ITEMS_AI_MIN_BUDGET_SECONDS),
+            min(float(NEW_ITEMS_AI_MAX_BUDGET_SECONDS), budget),
         )
         return {
             "scan_enabled": scan_enabled,
             "home_country": home_country,
             "extra_home_terms": extra_home_terms,
             "auto_hide_foreign": auto_hide_foreign,
-            "max_ai_per_cycle": max_ai_per_cycle,
+            "ai_budget_seconds": budget,
         }
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -2580,8 +2620,223 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Last new-items AI failure message, or None when the last run was clean."""
         return self._new_items_ai_last_error
 
+    @property
+    def new_items_ai_rate_per_minute(self) -> float | None:
+        """Measured categorisation throughput, items per minute.
+
+        ``None`` until a wave has completed — this is what the loop actually
+        achieved, never a guess, so there is nothing to report before the
+        first measurement (v1.15.1).
+        """
+        if not self._new_items_ai_rate:
+            return None
+        return round(self._new_items_ai_rate * 60.0, 1)
+
+    def new_items_ai_eta_seconds(self, pending: int) -> int | None:
+        """Wall-clock seconds to clear *pending* items at the measured rate.
+
+        The measured rate counts only time spent inside AI calls, but the
+        catch-up chain sleeps between passes, so the raw rate would promise a
+        finish the clock never delivers. Scaling by the duty cycle makes this
+        an answer about wall clock, which is the only kind worth showing
+        anyone.
+
+        The duty cycle is measured from the last completed pass rather than
+        assumed from the budget, because the two disagree exactly where it
+        matters: a backend slower than the whole budget runs one long wave and
+        overruns it, so its work phase is far longer than the budget and its
+        real duty cycle is much closer to 1. Assuming the budget there would
+        quote a backlog as taking longer than it does.
+        """
+        if pending <= 0 or not self._new_items_ai_rate:
+            return None
+        duty = self._new_items_ai_duty
+        if duty is None:
+            # No pass has finished yet, so estimate from the configured budget.
+            budget = self._new_items_settings()["ai_budget_seconds"]
+            duty = budget / (budget + NEW_ITEMS_AI_CATCHUP_SECONDS)
+        effective = self._new_items_ai_rate * duty
+        if effective <= 0:
+            return None
+        return int(round(pending / effective))
+
+    def _record_new_items_ai_rate(self, sent: int, ok: int, elapsed: float) -> None:
+        """Fold one wave's throughput into the reported EWMA (v1.15.1).
+
+        Only whole waves count. A wave where some calls failed spent most of
+        its time waiting on the ones that never answered, so its items/second
+        describes the failure and not the hardware — folding that in would
+        drop the rate the card shows (and the ETA built on it) on a single
+        flaky wave, which is misreporting rather than measuring.
+        """
+        if ok <= 0 or ok < sent or elapsed <= 0:
+            return
+        rate = ok / elapsed
+        if self._new_items_ai_rate is None:
+            self._new_items_ai_rate = rate
+        else:
+            self._new_items_ai_rate = 0.7 * self._new_items_ai_rate + 0.3 * rate
+
+    def _adapt_new_items_ai_wave(self, sent: int, ok: int, elapsed: float) -> None:
+        """Retune the wave size from the wave just completed (v1.15.1).
+
+        Tuned on **throughput** (items/second) rather than latency: latency
+        always worsens as concurrency grows, so tuning on it would shrink the
+        wave forever and never find the hardware's actual ceiling. Throughput
+        rises until the backend saturates and then flattens, which gives the
+        loop something to converge on.
+
+        Throughput is remembered **per wave size** rather than as a single
+        best-ever figure, which is what makes the search recoverable. A
+        best-ever bar only ever ratchets up, so one transient failure at the
+        top of the ramp would halve the wave and then leave every later,
+        necessarily-slower wave looking like a regression — walking the size
+        down to 1 and pinning it there for the life of the coordinator, which
+        is precisely the trickle this release exists to remove. Comparing a
+        size against its neighbours instead means each decision is made
+        against a like-for-like measurement, and a size can always be tried
+        again.
+        """
+        size = max(1, sent)
+        if ok < sent:
+            # A failure is the one signal that isn't about speed. The usual
+            # cause is a backend refusing concurrent calls, so back off hard
+            # instead of nibbling.
+            #
+            # The failed size is recorded as worth *nothing* rather than having
+            # its record deleted: an absent record reads as "never tried" and
+            # the growth rule explores those eagerly, so deleting it would send
+            # the very next successful wave straight back into the size that
+            # just failed, and the loop would spend half its waves failing. A
+            # zero keeps it out of the running until the periodic re-probe
+            # below clears it, which is what makes recovery deliberate rather
+            # than immediate.
+            self._new_items_ai_wave_rates[size] = 0.0
+            self._new_items_ai_wave = max(1, size // 2)
+            self._new_items_ai_wave_holds = 0
+            return
+        if elapsed <= 0 or sent <= 0:
+            return
+
+        rate = sent / elapsed
+        known = self._new_items_ai_wave_rates.get(size)
+        # A zero is the failure sentinel above, not a throughput measurement.
+        # Blending into it would halve the record for a size that has just
+        # proved it works, and that wrong number would then be compared
+        # against its neighbours for as long as it survives the EWMA.
+        self._new_items_ai_wave_rates[size] = (
+            rate if known is None or known <= 0 else 0.5 * known + 0.5 * rate
+        )
+
+        if size != self._new_items_ai_wave:
+            # The tail of a backlog: fewer items were left than the configured
+            # wave asked for. It is an honest measurement *of the smaller
+            # size*, which is why it is filed under ``size`` and not under the
+            # configured size — doing the latter fills the table with figures
+            # taken at a concurrency the key does not describe, and since most
+            # backlogs do not divide exactly by the wave size that would be
+            # the common case rather than an edge case. What it is not is a
+            # verdict on the configured size, so it must not move it.
+            return
+
+        bigger = min(NEW_ITEMS_AI_CONCURRENCY_MAX, size * 2)
+        smaller = max(1, size // 2)
+        bigger_rate = self._new_items_ai_wave_rates.get(bigger)
+        smaller_rate = self._new_items_ai_wave_rates.get(smaller)
+
+        if smaller != size and smaller_rate is None:
+            # Probe the floor before climbing. Without this the walk from the
+            # start size only ever jumps upwards, so a single call at a time
+            # is never measured at all and a backend that is genuinely fastest
+            # that way — one that serialises internally but never errors, so
+            # nothing ever halves the wave — would sit at the start size
+            # forever. One wave is what finding that out costs.
+            self._new_items_ai_wave = smaller
+            self._new_items_ai_wave_holds = 0
+            return
+        if bigger != size and bigger_rate is None:
+            # Never measured. Explore upwards: one possibly-slow wave is a
+            # bounded cost, and never exploring is how a fast GPU ends up
+            # trickling items one at a time.
+            self._new_items_ai_wave = bigger
+            self._new_items_ai_wave_holds = 0
+            return
+        if (
+            bigger != size
+            and bigger_rate is not None
+            and bigger_rate >= rate * NEW_ITEMS_AI_GROW_GAIN
+        ):
+            self._new_items_ai_wave = bigger
+            self._new_items_ai_wave_holds = 0
+            return
+        if (
+            smaller != size
+            and smaller_rate is not None
+            and smaller_rate >= rate * NEW_ITEMS_AI_GROW_GAIN
+        ):
+            # A smaller wave genuinely did better — a backend that serialises
+            # requests internally, or one throttling concurrent callers.
+            self._new_items_ai_wave = smaller
+            self._new_items_ai_wave_holds = 0
+            return
+
+        # This size beats both neighbours — hold. Requiring a clear margin to
+        # move at all is what stops the size oscillating once it has
+        # converged.
+        self._new_items_ai_wave_holds += 1
+        if self._new_items_ai_wave_holds >= NEW_ITEMS_AI_REPROBE_WAVES:
+            # Measurements go stale: the GPU was busy, a cloud quota window
+            # reset, another integration stopped competing for the model.
+            # Forgetting the size above makes the search climb again rather
+            # than trusting a number from an hour ago forever — and it is the
+            # only way back up after a failure, which records a zero there.
+            #
+            # Only the size above, and only when there is one. The current
+            # size is re-measured on every wave, so a backend that slows down
+            # is noticed without any help; and the size below keeps its record
+            # because a stale figure there can cost at most one wave (the move
+            # down re-measures it immediately). Popping the degenerate
+            # neighbour at the floor or the ceiling — where double or half is
+            # the current size itself — would throw away the one measurement
+            # the decision is actually standing on.
+            self._new_items_ai_wave_holds = 0
+            if bigger != size:
+                self._new_items_ai_wave_rates.pop(bigger, None)
+
+    async def async_reset_new_items_ai_cache(self) -> int:
+        """Drop every cached new-items AI verdict so the next pass re-asks.
+
+        Two things have to give way for a forced re-run: the in-memory
+        ``ai_pending`` flag (what the pass queues on) and the registry's
+        cached verdict (what it would hand back instead of calling the model).
+        Dropping both means a forced call that fails retries on the next cycle
+        rather than quietly reverting to the category being replaced.
+
+        It lives here, under the categorisation lock, rather than in the
+        service handler — and that is the whole point of the method. The
+        catch-up chain holds this lock for the length of a pass, so a reset
+        running alongside it would flip items the pass had *already* finished
+        back to pending and clear their fresh verdicts while the pass's cursor
+        had moved beyond them. The work that had just succeeded would be lost,
+        the pass would over-report what was left, and the card would show
+        items as unsorted that it had correctly sorted seconds earlier.
+        """
+        if not self.data:
+            return 0
+        async with self._new_items_ai_lock:
+            items = (self.data.get("new_items") or {}).get("items") or []
+            for item in items:
+                item["ai_pending"] = True
+                self.new_items_registry.clear_ai(item["full_name"])
+            await self.new_items_registry.async_save()
+            return len(items)
+
+    def async_schedule_new_items_ai_run(self) -> None:
+        """Public entry point for the catch-up chain (used by the service)."""
+        self._schedule_new_items_ai_run()
+
     def _schedule_new_items_ai_run(self) -> None:
-        """Kick off a bounded background new-items categorisation pass, if none running."""
+        """Kick off a background new-items categorisation chain, if none running."""
         if not self.ai_enabled:
             return
         if self._new_items_ai_task is not None and not self._new_items_ai_task.done():
@@ -2591,37 +2846,161 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_deferred_new_items_ai_run(self) -> None:
-        """Run a new-items pass once the coordinator has published its data.
+        """Keep running passes until the backlog is clear (v1.15.1).
 
-        Same reasoning as ``_async_deferred_ai_run``: without this yield the
-        pass would run inside ``_async_update_data``, before
-        ``DataUpdateCoordinator`` assigns ``self.data`` (#91/#95).
+        The first ``sleep(0)`` is the same reasoning as
+        ``_async_deferred_ai_run``: without it the pass would run inside
+        ``_async_update_data``, before ``DataUpdateCoordinator`` assigns
+        ``self.data`` (#91/#95).
+
+        The loop after it is the batch-and-retry: v1.15.0 ran exactly one
+        bounded pass per hourly scan, so a HACS drop of a few hundred items
+        took the best part of a day no matter how fast the AI answered. Here a
+        pass that leaves work behind is followed by another, and the only
+        things that stop the chain are an empty backlog, a pass that made no
+        progress at all, or the hard pass cap.
+
+        ``new_items_ai_in_progress`` is held True across the whole chain, so
+        the card reads "sorting" once rather than flickering between passes.
         """
         await asyncio.sleep(0)
-        await self.async_generate_new_item_categories()
+        was_in_progress = self.new_items_ai_in_progress
+        self.new_items_ai_in_progress = True
+        try:
+            for _ in range(NEW_ITEMS_AI_MAX_PASSES):
+                counts = await self.async_generate_new_item_categories()
+                if counts.get("remaining", 0) <= 0:
+                    break
+                if counts.get("generated", 0) == 0:
+                    # No forward progress. Leave the rest to the next hourly
+                    # scan rather than spinning on a broken AI entity — that
+                    # scan is the back-off, so no extra timer is needed.
+                    break
+                await asyncio.sleep(NEW_ITEMS_AI_CATCHUP_SECONDS)
+        finally:
+            self.new_items_ai_in_progress = was_in_progress
+            self.async_update_listeners()
 
-    async def async_generate_new_item_categories(
-        self, *, limit: int | None = None
-    ) -> dict[str, int]:
-        """Batch-categorise pending new HACS items via the AI Task (#95).
+    async def _async_run_new_items_ai_wave(
+        self, wave: list[dict[str, Any]], ai_entity: str | None
+    ) -> list[dict[str, Any] | None]:
+        """Send one wave of items to the AI concurrently.
 
-        Mirrors ``async_generate_summaries``: bounded, cached, and progress is
-        pushed to listeners as each item lands so a slow local model fills the
-        card in progressively rather than all-or-nothing. *limit* defaults to
-        the ``CONF_NEW_ITEMS_MAX_AI_PER_CYCLE`` option.
+        ``asyncio.gather`` is used without ``return_exceptions`` on purpose:
+        :meth:`_async_categorise_new_item` already turns every ordinary
+        failure into ``None``, so the only thing that can escape is
+        ``CancelledError`` — and swallowing that would make an unload wait for
+        the whole wave. ``gather`` does not cancel siblings when one member
+        raises, hence the explicit cancel on the way out.
 
-        A second hide chance happens here: when the AI's ``country_scope``
-        turns out to be foreign (:func:`ai_scope_hides`) and the item has no
-        ``never_hide`` exemption, it is moved from ``items`` to ``hidden``
-        with ``source == "ai"`` — the rules pre-filter in
-        ``ComponentScanner.scan_new_items`` only catches what the repository's
-        own text gives away; this catches what the AI inferred instead.
+        Concurrency makes two coordinator attributes racy —
+        ``_ai_structured_ok`` and ``_new_items_ai_last_error``. Both are
+        last-writer-wins caches of "what did the backend just do", so losing a
+        race costs at most one redundant structured attempt or one duplicate
+        log line; neither is worth a lock on the hot path.
+        """
+        if len(wave) == 1:
+            return [await self._async_categorise_new_item(wave[0], ai_entity)]
+        tasks = [
+            asyncio.create_task(self._async_categorise_new_item(item, ai_entity))
+            for item in wave
+        ]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            raise
+
+    def _apply_new_item_ai_result(
+        self,
+        item: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        items: list[dict[str, Any]],
+        new_items: dict[str, Any],
+        settings: dict[str, Any],
+        ai_entity: str | None,
+    ) -> None:
+        """Record one categorisation and apply the AI's second hide chance.
+
+        When the AI's ``country_scope`` turns out to be foreign
+        (:func:`ai_scope_hides`) and the item has no ``never_hide`` exemption,
+        it moves from ``items`` to ``hidden`` with ``source == "ai"`` — the
+        rules pre-filter in ``ComponentScanner.scan_new_items`` only catches
+        what the repository's own text gives away; this catches what the AI
+        inferred instead.
 
         That move is only the immediate, in-memory half of it, so the card
         updates while the batch runs. The hide *persists* because the cached
         ``country_scope`` is re-read by ``scan_new_items`` on every later
-        cycle, which is the only place visibility is ever decided — hence
-        both sides going through the one :func:`ai_scope_hides` predicate.
+        cycle, which is the only place visibility is ever decided — hence both
+        sides going through the one :func:`ai_scope_hides` predicate.
+        """
+        full_name = item["full_name"]
+        self.new_items_registry.set_ai(
+            full_name,
+            category=result["category"],
+            country_scope=result["country_scope"],
+            model=ai_entity,
+        )
+        item["category"] = result["category"]
+        item["ai_pending"] = False
+
+        if (
+            settings["auto_hide_foreign"]
+            and not self.new_items_registry.is_never_hide(full_name)
+            and ai_scope_hides(
+                item,
+                result["country_scope"],
+                home_country=settings["home_country"],
+                extra_home_terms=settings["extra_home_terms"],
+            )
+        ):
+            self.new_items_registry.record_hidden(
+                full_name,
+                country=result["country_scope"],
+                term=result["country_scope"],
+                field="ai_country_scope",
+                source="ai",
+            )
+            if item in items:
+                items.remove(item)
+            new_items.setdefault("hidden", []).append(
+                {
+                    **item,
+                    "reason": (
+                        f'AI judged this built for "{result["country_scope"]}"'
+                    ),
+                    "country": result["country_scope"],
+                    "term": result["country_scope"],
+                    "field": "ai_country_scope",
+                    "source": "ai",
+                }
+            )
+
+    async def async_generate_new_item_categories(
+        self, *, limit: int | None = None, max_seconds: float | None = None
+    ) -> dict[str, int]:
+        """Categorise pending new HACS items via the AI Task (#95, #96).
+
+        One *pass*: waves of concurrent AI calls until the time budget runs
+        out, the work runs out, or the backend stops answering. Progress is
+        pushed to listeners after every wave, so a slow local model fills the
+        card in progressively rather than all-or-nothing.
+
+        The budget (``max_seconds``, defaulting to the
+        ``CONF_NEW_ITEMS_AI_BUDGET_SECONDS`` option) is checked **between**
+        waves and never mid-call. That is deliberate: a model slower than the
+        entire budget still completes one wave per pass and so still makes
+        progress, where a mid-call cut-off would make none and loop forever.
+
+        *limit* caps the number of items considered in this pass at all; it is
+        the service's ``max_items`` and is unset for automatic runs, because a
+        count is exactly the hardware-blind knob v1.15.1 exists to retire.
+
+        ``remaining`` is the pending count when the pass ends, so a non-zero
+        value is the signal for the catch-up chain to run another pass.
         """
         counts = {"generated": 0, "failed": 0, "skipped": 0, "remaining": 0}
         enabled, ai_entity = self._ai_settings()
@@ -2633,73 +3012,88 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return counts
 
         settings = self._new_items_settings()
-        batch_limit = settings["max_ai_per_cycle"] if limit is None else limit
+        budget = (
+            settings["ai_budget_seconds"] if max_seconds is None else float(max_seconds)
+        )
 
         async with self._new_items_ai_lock:
             items: list[dict[str, Any]] = new_items.get("items", [])
             todo = [item for item in items if item.get("ai_pending")]
 
-            if batch_limit is not None and len(todo) > batch_limit:
-                counts["remaining"] = len(todo) - batch_limit
-                todo = todo[:batch_limit]
+            if limit is not None and len(todo) > limit:
+                todo = todo[:limit]
 
             if not todo:
+                # Still report the true backlog: a caller that passed
+                # ``limit=0`` has selected nothing to do, which is not the
+                # same as there being nothing left to sort.
+                counts["remaining"] = sum(
+                    1 for item in items if item.get("ai_pending")
+                )
                 return counts
 
+            # Saved and restored rather than forced False, so a pass nested
+            # inside the catch-up chain doesn't flip the card back to "done"
+            # between passes.
+            was_in_progress = self.new_items_ai_in_progress
             self.new_items_ai_in_progress = True
             self.async_update_listeners()
+            started = time.monotonic()
+            failed_waves = 0
+            index = 0
             try:
-                for item in todo:
-                    full_name = item["full_name"]
-                    result = await self._async_categorise_new_item(item, ai_entity)
-                    if result is None:
-                        counts["failed"] += 1
-                        continue
+                while index < len(todo):
+                    if index and time.monotonic() - started >= budget:
+                        break
 
-                    self.new_items_registry.set_ai(
-                        full_name,
-                        category=result["category"],
-                        country_scope=result["country_scope"],
-                        model=ai_entity,
-                    )
-                    item["category"] = result["category"]
-                    item["ai_pending"] = False
-                    counts["generated"] += 1
+                    wave = todo[index : index + max(1, self._new_items_ai_wave)]
+                    index += len(wave)
 
-                    if (
-                        settings["auto_hide_foreign"]
-                        and not self.new_items_registry.is_never_hide(full_name)
-                        and ai_scope_hides(
+                    wave_started = time.monotonic()
+                    results = await self._async_run_new_items_ai_wave(wave, ai_entity)
+                    elapsed = time.monotonic() - wave_started
+
+                    ok = 0
+                    for item, result in zip(wave, results):
+                        if result is None:
+                            counts["failed"] += 1
+                            continue
+                        ok += 1
+                        counts["generated"] += 1
+                        self._apply_new_item_ai_result(
                             item,
-                            result["country_scope"],
-                            home_country=settings["home_country"],
-                            extra_home_terms=settings["extra_home_terms"],
-                        )
-                    ):
-                        self.new_items_registry.record_hidden(
-                            full_name,
-                            country=result["country_scope"],
-                            term=result["country_scope"],
-                            field="ai_country_scope",
-                            source="ai",
-                        )
-                        items.remove(item)
-                        new_items.setdefault("hidden", []).append(
-                            {
-                                **item,
-                                "reason": (
-                                    f'AI judged this built for "{result["country_scope"]}"'
-                                ),
-                                "country": result["country_scope"],
-                                "term": result["country_scope"],
-                                "field": "ai_country_scope",
-                                "source": "ai",
-                            }
+                            result,
+                            items=items,
+                            new_items=new_items,
+                            settings=settings,
+                            ai_entity=ai_entity,
                         )
 
+                    self._record_new_items_ai_rate(len(wave), ok, elapsed)
+                    self._adapt_new_items_ai_wave(len(wave), ok, elapsed)
                     self.async_update_listeners()
+
+                    if ok:
+                        failed_waves = 0
+                    else:
+                        failed_waves += 1
+                        if failed_waves >= NEW_ITEMS_AI_MAX_FAILED_WAVES:
+                            break
             finally:
-                self.new_items_ai_in_progress = False
+                # What fraction of this pass's wall clock was actually spent
+                # working, measured rather than assumed, for the ETA. A
+                # backend slower than the budget overruns it on its single
+                # wave, so its duty cycle is far nearer 1 than the budget
+                # would suggest.
+                work = time.monotonic() - started
+                if work > 0:
+                    self._new_items_ai_duty = work / (
+                        work + NEW_ITEMS_AI_CATCHUP_SECONDS
+                    )
+                counts["remaining"] = sum(
+                    1 for item in items if item.get("ai_pending")
+                )
+                self.new_items_ai_in_progress = was_in_progress
                 self.new_items_ai_last_run = dt_util.utcnow().isoformat()
                 await self.new_items_registry.async_save()
                 self.async_update_listeners()
@@ -3163,6 +3557,12 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             ATTR_AI_LAST_ERROR: self.coordinator.new_items_ai_last_error,
             ATTR_AI_LAST_RUN: self.coordinator.new_items_ai_last_run,
         }
+        # Measured throughput and what it implies for the backlog (v1.15.1).
+        # Both stay null until a wave has run, because they are measurements
+        # and an invented number here would be worse than no number.
+        pending = attrs[ATTR_AI_PENDING]
+        attrs[ATTR_AI_RATE_PER_MINUTE] = self.coordinator.new_items_ai_rate_per_minute
+        attrs[ATTR_AI_ETA_SECONDS] = self.coordinator.new_items_ai_eta_seconds(pending)
         if self.coordinator.data and "last_scan" in self.coordinator.data:
             attrs["last_scan"] = self.coordinator.data["last_scan"]
         return attrs

@@ -160,3 +160,93 @@ Five edge cases came out of running it over the store, and out of a review of th
 The repository path is not shown as its own line. The name now carries the meaning, the kind chip says Integration or Card, and the stars/downloads/age line is already dense; adding `owner/repo` under every row would spend a line on something that matters at the moment you decide to install, not at the moment you triage. It is on the row's tooltip and one tap away behind the GitHub link, which is also where HACS itself puts it.
 
 **Lesson:** "surely the upstream already has this data" is a hypothesis, not a premise, and it costs one query to settle. The right move was to go and count — 0 of 2,244 — before writing anything, because the answer decided whether this was a one-line field fix or a derivation with its own test file. It also pays to read how the upstream renders it: HACS's fallback line is both the explanation for the names on screen and the specification worth matching.
+
+## 2026-10-20 — Pace the AI by time spent, not by items per cycle
+
+v1.15.0 shipped a fixed budget of 10 AI calls per hourly scan, with an option to
+raise the ceiling to 50. Watching it run in production showed what that actually
+means: at 12:23:40 the integration sent ten items and had all ten answers back by
+12:23:45 — 4.84 s, 0.48 s an item — then did nothing at all for the rest of the
+hour. A 177-item backlog was therefore ~80 seconds of real AI work spread across
+about eighteen hours of waiting. Raising the ceiling to 50 would have made it four
+hours instead of eighteen, which is the same bug with a better number.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| What paces a pass | **A time budget** — default 20 s, settable 5–300 | A count of items per cycle, at any default or ceiling |
+| How many items go at once | **Self-tuning**: throughput measured per wave size, 1→8 concurrent | A fixed concurrency; a user-set number; hill-climbing against one best-ever rate |
+| Reaction to a failure | **Halve the wave immediately**; give up the pass after 3 consecutive all-failed waves | Keep the wave size and retry; abandon the pass on the first failure |
+| When the budget is checked | **Between waves only** | Mid-flight, cancelling calls already sent |
+| What happens when a pass ends with work left | **Another pass, 5 s later, until nothing is pending** | Wait for the next hourly scan; ask the user to call the service |
+| Progress reporting | **Measured items/minute and an ETA**, as sensor attributes | A percentage, or nothing |
+
+**Why a count can never be the right knob.** The correct number of items per hour
+is a function of hardware nobody but the user has: a local 9B on a decent GPU
+answers in 0.45 s, a CPU-only build in 30 s, a rate-limited cloud model in two
+seconds but only twenty times a minute. Any default is wrong for most people, and
+a ceiling only moves where it is wrong. A time budget is the same instruction
+expressed in the one unit that means the same thing on every machine — "spend
+twenty seconds on this, then get out of the way" — and it leaves the item count to
+be *discovered* rather than configured. Measured on the production instance, the
+same 177-item backlog that was taking ~18 hours clears in about two minutes.
+
+**Why the concurrency tunes itself rather than being an option.** The budget alone
+would still be throttled by sending one item at a time. So each wave is timed and
+the next one is sized from the result. Throughput, not latency, is the thing being
+maximised, because a backend that answers eight requests in 3 s is better than one
+that answers one in 0.4 s even though the second looks faster per call. Failures
+halve immediately — a backend refusing work should be backed off, not hammered —
+and three consecutive all-failed waves end the pass, leaving the hourly scan as the
+retry.
+
+**Why throughput is remembered per wave size, not as a best-ever figure.** The first
+cut of this controller kept one number, the best throughput ever observed, and grew
+or shrank the wave against it. Review caught that this cannot recover. The bar only
+ever ratchets upwards, so a single transient failure at the top of the ramp halved
+the wave while leaving the bar at the *top size's* rate; every subsequent smaller —
+and therefore legitimately slower — wave then read as a regression, and the size
+walked down to one item at a time and stayed there for the life of the coordinator.
+One flaky call would have reinstated the exact hourly trickle this release exists to
+remove, and only a Home Assistant restart would have cleared it. The fix is to
+record the measured rate *per wave size* and compare a size only against its
+neighbours, so every decision is like-for-like; a size that has never been measured
+is always worth one wave (never exploring is how a fast GPU ends up sorting two at a
+time forever); a failed size is recorded as worth nothing rather than forgotten, or
+the very next good wave would walk straight back into it; and after five waves with
+no move the neighbours' records are dropped so they get re-measured, because the GPU
+being busy once should not pin the wave size for a week of uptime.
+
+**Why the budget is checked between waves and never mid-call.** A model slower than
+the entire budget would otherwise make zero progress forever: start a wave, exceed
+20 s, get cancelled, repeat. The loop checks the clock *before* sending a wave and
+never after, and it skips that check for the first wave of a pass. So the slowest
+imaginable backend still completes one wave per pass and the backlog still drains —
+slowly, but monotonically. This is the difference between pacing and timing out.
+
+**Why it chains itself instead of asking.** The request this came from was "no
+manual effort, do the permanent fix". A pass that ends with items pending schedules
+the next pass five seconds later, in a background task, repeating until `remaining`
+hits zero — with two independent brakes: a pass that generated nothing stops the
+chain (the next hourly scan is the back-off), and a hard cap of 500 passes stops a
+pathological loop. The service is still there with `max_items`/`max_seconds` for
+anyone who wants to bound one pass by hand, but nothing requires it.
+
+The old `new_items_max_ai_per_cycle` constant is kept defined, unread, because
+existing config entries still carry the key; the next options save drops it.
+
+**Lesson:** when a limit exists to protect against unknown hardware, express it in a
+unit that is the same on all hardware. "Ten items" encodes an assumption about how
+fast one item is and is wrong by two orders of magnitude at the edges; "twenty
+seconds" encodes none, and the quantity you actually wanted — how much work fits —
+becomes something the code can measure at runtime instead of something the user has
+to guess in a form. And the measurement is worth taking before changing the number:
+the recorder history showing 4.84 s of work per hour is what proved the cap, not the
+model, was the whole bottleneck.
+
+**Second lesson, from the review.** An adaptive controller has to be judged on how it
+*recovers*, not on how it converges — convergence is the easy half and the one the
+happy-path tests cover. A monotone comparison (best-ever anything) is the smell: it
+makes a transient fault permanent, and in a Home Assistant integration "permanent"
+means until the user restarts Home Assistant, which they have no reason to connect to
+a slow card. The test that earns its keep here is the one that fails a wave on purpose
+and then checks the size climbs back.

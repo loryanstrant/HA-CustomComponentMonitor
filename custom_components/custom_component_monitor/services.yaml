@@ -173,19 +173,32 @@ categorise_new_items:
   name: "Categorise new HACS items"
   description: >-
     Run AI categorisation for pending items on the "New in HACS" review
-    card. Only items without a cached category are processed unless
-    "Force" is enabled. Requires AI summaries to be enabled in the
-    integration options.
+    card. You should not normally need this: sorting starts by itself after
+    every scan and keeps going until the backlog is clear. Only items
+    without a cached category are processed unless "Force" is enabled.
+    Requires AI summaries to be enabled in the integration options.
   fields:
     max_items:
       name: "Maximum items"
       description: >-
-        Stop after this many AI calls. Omit to use the "Maximum AI
-        categorisations per cycle" option.
+        Sort at most this many items and then stop for good — no background
+        catch-up afterwards. Omit to sort the whole backlog.
       selector:
         number:
           min: 1
-          max: 100
+          max: 2000
+          mode: box
+    max_seconds:
+      name: "Time limit"
+      description: >-
+        How long this one pass may spend on AI calls before handing the rest
+        to the background catch-up. Omit to use the "AI sorting time per
+        pass" option.
+      selector:
+        number:
+          min: 1
+          max: 600
+          unit_of_measurement: s
           mode: box
     force:
       name: "Force"
