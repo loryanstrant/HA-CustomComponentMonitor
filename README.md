@@ -145,7 +145,7 @@ Or replace steps 1–6 with this:
 
 ## Entities
 
-The integration creates five sensors and one to-do entity:
+The integration creates six sensors and one to-do entity:
 
 | Entity | Description |
 |--------|-------------|
@@ -154,6 +154,7 @@ The integration creates five sensors and one to-do entity:
 | `sensor.unused_custom_themes` | Count and details of unused custom themes |
 | `sensor.unused_frontend_resources` | Count and details of unused frontend cards/plugins |
 | `sensor.hacs_updates` | Count of HACS-installed components with a pending update, with details of each |
+| `sensor.hacs_new_items` | Count of new, not-yet-installed HACS repositories worth reviewing, grouped by category (v1.15.0+; can be switched off in the options) |
 | `todo.hacs_update_actions` | Persistent to-do list for HACS updates installed with follow-up actions |
 
 ### Sensor Attributes
@@ -188,13 +189,14 @@ Items persist across Home Assistant restarts using local storage.
 
 ## Dashboard Cards
 
-The integration automatically registers three Lovelace cards:
+The integration automatically registers four Lovelace cards:
 
 | Card type | Purpose |
 |-----------|---------|
 | `custom:custom-component-monitor-card` | Shows installed/used/unused HACS components by category |
 | `custom:update-action-tracker-card` | Shows pending HACS updates with Skip, Update, and Update & Action buttons |
 | `custom:recently-installed-unused-card` | Shows HACS components installed within a recent window (default 30 days) that are still unused |
+| `custom:hacs-new-items-card` | Shows new HACS repositories grouped by category, with foreign-country items hidden and bulk dismiss |
 
 ### Custom Component Monitor Card
 
@@ -396,6 +398,150 @@ that date is written down and **never moves forward again**. An update no longer
 
 The footer shows when exact tracking began, and `sensor.hacs_installed_components` carries the
 same value as the `install_dates_since` attribute.
+
+### New in HACS card
+
+HACS adds new integrations and cards to its store in bulk. This card surfaces the genuinely new ones: it hides items flagged for another country (with an always-available audit list to review them), groups the remainder by what they do, and lets you dismiss entire categories in one tap.
+
+#### Via UI
+
+1. Edit a dashboard → **Add Card**
+2. Search for **New in HACS**
+3. Optionally adjust the entity, title, filter, and sorting
+
+![The New in HACS card editor](docs/images/card-editor-new-items.png)
+
+#### Via YAML
+
+```yaml
+type: custom:hacs-new-items-card
+title: New in HACS
+```
+
+#### Card Configuration
+
+Every option below is available in the visual editor — no YAML required.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `entity` | string | `sensor.hacs_new_items` | The sensor entity to read |
+| `title` | string | `New in HACS` | Card title. Leave it blank in the editor to follow the default |
+| `kind_filter` | string | `all` | Which kinds of item to show initially: `all`, `integration`, or `card` |
+| `sort` | string | `newest` | Default sort order within each group: `newest`, `stars`, or `downloads` |
+| `show_hidden` | boolean | `false` | Start with the hidden (country-filtered) items expanded |
+| `max_items_per_group` | number | `0` | Maximum items per category group (0 = all) |
+
+#### Card Features
+
+- Lists not-yet-installed repositories flagged new by HACS
+- Hides items matching your home country (with an audit list showing the match)
+- Groups items alphabetically by what they do, with "Other" pinned last
+- Filter chips for All / Integrations / Cards
+- **Dismiss all (n)** button per group, or tick individual items and **Dismiss N selected**
+- Shows each item's display name, not its repository slug — the same name the HACS panel
+  shows, with `owner/repo` on the tooltip and behind the GitHub link (see
+  [Where the names come from](#where-the-names-come-from))
+- Shows stars, downloads, age and a two-line description per item
+- Repository links and single-item dismiss buttons
+- **Show hidden (n)** reveals country-hidden items with the matched term and field, plus a **Restore** button
+
+#### Where the names come from
+
+HACS only stores a real display name for repositories it has fetched the contents of — in
+practice, the ones you have installed. For everything else in the store it has nothing: the
+2,244 new, not-installed repositories in one real store carried no name at all. The HACS
+panel still shows readable names for them because it generates one from the repository name
+at display time.
+
+The card does the same thing, in the same order HACS does:
+
+1. the `name` from the repository's `hacs.json`, if it has one — "Mushroom";
+2. the integration's own `manifest.json` name — "Frigate";
+3. otherwise the repository name tidied up.
+
+Step 3 goes slightly further than HACS's version, which lower-cases anything it did not
+capitalise itself: `ha-checklist-card` becomes **Checklist Card** rather than "Ha Checklist
+Card", `ScentAirHABridge` becomes **Scent Air HA Bridge** rather than "Scentairhabridge",
+and `pv_management` becomes **PV Management**. The `owner/repo` the item actually lives at
+is still there on the row's tooltip and behind the GitHub link.
+
+#### Sensor: `sensor.hacs_new_items`
+
+The sensor state is the number of visible (not hidden, not dismissed) new items. Its attributes include:
+
+- `items` — list of visible new repositories (each with `name`, `full_name`, `kind`, `description`, `stars`, `downloads`, `age_days`, `category`, and `ai_pending`)
+- `by_category` — count of items in each category group
+- `hidden` — list of country-hidden items, each with `name`, `reason` (the matched term, field and country)
+- `hidden_count` — number of hidden items
+- `items_truncated` — how many visible items were held back because the list is longer than the attribute can carry (0 when nothing was held back)
+- `hidden_truncated` — the same, for the hidden list
+- `dismissed_count` — number of dismissed items
+- `total_new` — total of visible + hidden + dismissed items
+- `home_country` — the country code or name being checked
+- `ai_enabled` — whether AI categorisation is switched on
+- `ai_pending` — how many visible items are still missing a category
+- `ai_in_progress` — true while a categorisation batch is running
+- `ai_last_error` — the last AI failure message, or null when the last run was clean
+- `ai_last_run` — timestamp of the last categorisation run
+
+#### Services
+
+**`custom_component_monitor.dismiss_new_items`** — Permanently hide reviewed items from this card. Give **exactly one** of `repositories`, `category` or `all`.
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| `repositories` | One of | list | Full names (e.g. `["owner/repo", ...]`) to dismiss. Anything not currently shown as new is ignored |
+| `category` | One of | string | Dismiss every currently-shown new item in this category group (e.g. "Climate & heating") |
+| `all` | One of | boolean | Dismiss every currently-shown new item |
+
+**`custom_component_monitor.restore_new_items`** — Bring back items previously dismissed or auto-hidden. An item restored from auto-hide is also marked "never hide again", so the country rule can't hide it a second time. Give **exactly one** of `repositories`, `category` or `all`.
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| `repositories` | One of | list | Full names to restore. One that isn't currently dismissed or hidden is ignored |
+| `category` | One of | string | Restore every hidden or dismissed item in this category group |
+| `all` | One of | boolean | Restore every hidden and dismissed item |
+
+**`custom_component_monitor.categorise_new_items`** — Manually categorise items (normally done automatically). Requires AI summaries to be enabled in the integration options. Runs in the background; watch the sensor's `ai_pending` and `ai_last_run` attributes for progress.
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| `max_items` | No | number | Stop after this many AI calls (1–100). Omit to use the **Maximum AI categorisations per cycle** option |
+| `force` | No | boolean | Re-categorise items that already have a cached category. Costs one AI call per item (default `false`) |
+
+#### Country filtering
+
+New items with a country or region name in their name, description, or GitHub topics are hidden if they don't match your home country. The match understands:
+
+- **Full names and demonyms**: `Australia`, `Australian`, `Swedish`, `Dutch` (case-insensitive)
+- **Short codes**: `AU`, `AUS`, `US`, `UK`, `NZ`, `Aus`, `Aust`, `Oz` (case-sensitive; only standalone tokens)
+- **State codes**: `NSW`, `VIC`, `QLD`, `WA`, `SA`, `TAS`, `NT`, `ACT` (case-sensitive)
+
+Short codes and state codes are matched case-sensitively as whole tokens, so `US` matches the country but not the substring inside "status" or "bus", and `DE` matches Germany but not "Delivery". Collision-prone two-letter and three-letter codes (`IT`, `IN`, `NO`, `SO`, `TO`, `ME`, `BE`, `IS`, `ID`, `AT`, `DE`, `TR`, `SG`, `ES`, `ESP`, `PL`, `FI` and others) are only reached via their full names or demonyms, never as bare codes — running the matcher over a real HACS store of 2,261 repositories showed each one hiding something unrelated: `TR` from "FRITZ!Box ... TR-064" and "GenieACS TR-069", `SG` from "Siedle SG-150", `ES` from the "Renpho ES-CS20M" scale, `ESP` from every ESP32/ESP8266 board, `PL` from "Fantasy PL" (the football league) and "Pool Lab PL Max Series", `FI` from "Poolex Silverline FI pool heat pumps". Each of those countries is still reached by its full name or demonym, so none of them is lost — only its most collision-prone short form. Related to that: a short code followed by a hyphen or underscore and then anything with a digit in it is read as a model number or a protocol, not a country, so "TR-064" and "SG-150" never match while "UK-based" and "US-only" still do — the digit is what makes the distinction safe.
+
+Only the repository half of an `owner/repo` full name is scanned for a country — an author's GitHub handle says who wrote the thing, not who it's for, and handles carry nationality constantly (a generic e-ink bridge from `Jef-NL/trmnl-webhook-push`, a generic trading integration from `Smart-Home-Assistant-UK/homeassistant-trading212`). A country named in the repository name itself, like `energy_hub_poland`, still matches.
+
+A demonym — "German", "Slovak", "Spanish" and the like — is also the name of a language, and a repository that simply lists the languages its interface has been translated into reads exactly like one built for that country. A word-clock card listing "German, Swiss German (Bärndütsch) and English", a quiz game with "English, German and Spanish" questions, and a SolaX energy card offering "English & Slovak" were all being hidden on that basis before this rule: when a demonym appears within 40 characters of the word "English" with no full stop in between, it's read as a translation credit, not a market, and discarded — because this house runs Home Assistant in English, so naming another language *alongside* English is what a translated UI does. This is deliberately narrow: it only ever discards a demonym (never a country's own name, never a bare code, never a brand), it never reaches across a full stop ("Norwegian electricity prices. Docs in English." still hides), and it doesn't apply to GitHub topics at all, since a bare one-word topic like `polish` carries no surrounding sentence to judge — that residue is what the audit list is for. Measured on a real 2,261-repository store, this rule took hides from 178 to 175 without losing a single correct one.
+
+**Any home-country match beats every foreign match**, so a repository marked "AU/NZ energy prices" is kept even if it also mentions Sweden somewhere. Every hide is listed in the audit view with the matched term and field, so you can review them and **Restore** an item if the heuristic was wrong — restored items are never auto-hidden again.
+
+#### Disabling the feature
+
+New in HACS can be disabled in **Settings → Devices & services → Custom Component Monitor → Configure** by unchecking **Enable new item review**. When disabled, `sensor.hacs_new_items` is not created.
+
+#### Recorder exclusion and the attribute cap
+
+A real HACS store can flag thousands of repositories as new, and every one of them was once being written into this sensor's attributes. On a store with 2,240 new repositories that was 1.2 MB — and Home Assistant re-sends the full attribute payload to every connected dashboard on every refresh, not just to the recorder. The sensor now publishes at most 300 visible items and 100 hidden items, newest first (ties broken by stars); on that same store the attributes dropped to 221 KB. The counts are never capped — the sensor's state, `total_new`, `hidden_count` and `dismissed_count` always describe the whole queue — and when rows are held back, `items_truncated` and `hidden_truncated` say how many, so the card's header can honestly say "showing 300 of 2,069 to review" instead of quietly dropping the rest.
+
+The two big lists are also excluded from Home Assistant's recorder in code, so they never reach the database regardless of your configuration. The snippet below is belt-and-braces on top of that — it keeps the database lean even if that changes — while the cap above is what protects the websocket, which the recorder exclusion alone does nothing for:
+
+```yaml
+recorder:
+  exclude:
+    entities:
+      - sensor.hacs_new_items
+      - sensor.hacs_installed_components
+```
 
 ## Services
 

@@ -14,14 +14,21 @@ from homeassistant.components.todo import TodoItem, TodoItemStatus
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
     DOMAIN,
+    NEW_ITEM_CATEGORY_FALLBACK,
+    NEW_ITEM_CATEGORY_OPTIONS,
+    NEW_ITEMS_CARD_JS,
+    NEW_ITEMS_CARD_BASE_PATH,
+    SERVICE_CATEGORISE_NEW_ITEMS,
+    SERVICE_DISMISS_NEW_ITEMS,
     SERVICE_GENERATE_SUMMARIES,
+    SERVICE_RESTORE_NEW_ITEMS,
     SERVICE_UPDATE_AND_ACTION,
     SERVICE_UPDATE_ALL,
     UAT_CARD_JS,
@@ -54,6 +61,55 @@ SERVICE_GENERATE_SUMMARIES_SCHEMA = vol.Schema(
     }
 )
 
+# --- New in HACS (#95): dismiss / restore / categorise ---------------------
+
+NEW_ITEMS_SELECTOR_SCHEMA = vol.Schema(
+    {
+        vol.Optional("repositories"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("category"): cv.string,
+        vol.Optional("all"): cv.boolean,
+    }
+)
+
+SERVICE_CATEGORISE_NEW_ITEMS_SCHEMA = vol.Schema(
+    {
+        vol.Optional("max_items"): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        vol.Optional("force", default=False): cv.boolean,
+    }
+)
+
+
+def _new_items_selected_field(call_data: dict[str, Any], service: str) -> str:
+    """Validate the mutually-exclusive dismiss/restore selectors.
+
+    Exactly one of ``repositories`` / ``category`` / ``all`` must be given.
+    Returns the name of the one that was. Raises :class:`ServiceValidationError`
+    for zero, more than one, or (for ``category``) a name that isn't one of
+    :data:`NEW_ITEM_CATEGORY_OPTIONS`.
+    """
+    present = [
+        field
+        for field in ("repositories", "category", "all")
+        if call_data.get(field)
+    ]
+    if not present:
+        raise ServiceValidationError(
+            f"{service} needs exactly one of: repositories, category, all."
+        )
+    if len(present) > 1:
+        raise ServiceValidationError(
+            f"{service} takes exactly one of repositories, category or all — "
+            f"got {', '.join(present)}."
+        )
+    field = present[0]
+    if field == "category" and call_data["category"] not in NEW_ITEM_CATEGORY_OPTIONS:
+        raise ServiceValidationError(
+            f"Unknown category '{call_data['category']}'. Must be one of: "
+            f"{', '.join(NEW_ITEM_CATEGORY_OPTIONS)}."
+        )
+    return field
+
+
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 
@@ -76,11 +132,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     src_riu = Path(__file__).parent / "www" / RIU_CARD_JS
     dest_riu = www_dir / RIU_CARD_JS
 
+    src_hni = Path(__file__).parent / "www" / NEW_ITEMS_CARD_JS
+    dest_hni = www_dir / NEW_ITEMS_CARD_JS
+
     def _copy_cards():
         www_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src_ccm), str(dest_ccm))
         shutil.copy2(str(src_uat), str(dest_uat))
         shutil.copy2(str(src_riu), str(dest_riu))
+        shutil.copy2(str(src_hni), str(dest_hni))
 
     await hass.async_add_executor_job(_copy_cards)
 
@@ -88,6 +148,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         await _register_lovelace_resource(hass, CARD_BASE_PATH, CARD_JS)
         await _register_lovelace_resource(hass, UAT_CARD_BASE_PATH, UAT_CARD_JS)
         await _register_lovelace_resource(hass, RIU_CARD_BASE_PATH, RIU_CARD_JS)
+        await _register_lovelace_resource(
+            hass, NEW_ITEMS_CARD_BASE_PATH, NEW_ITEMS_CARD_JS
+        )
 
     hass.bus.async_listen_once("homeassistant_started", _deferred_register)
 
@@ -336,6 +399,162 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             supports_response=SupportsResponse.OPTIONAL,
         )
 
+    # --- dismiss_new_items service (#95) ---
+    if not hass.services.has_service(DOMAIN, SERVICE_DISMISS_NEW_ITEMS):
+
+        async def handle_dismiss_new_items(call: ServiceCall) -> None:
+            coordinator = hass.data[DOMAIN].get("coordinator")
+            if coordinator is None:
+                raise HomeAssistantError(
+                    "Custom Component Monitor is still starting up — no scan "
+                    "coordinator is available yet."
+                )
+            field = _new_items_selected_field(call.data, SERVICE_DISMISS_NEW_ITEMS)
+            registry = coordinator.new_items_registry
+
+            # "Currently visible" is exactly what sensor.hacs_new_items shows:
+            # the last scan's new, not-installed, not-dismissed, not-hidden
+            # items. Read it from there rather than re-scanning.
+            visible: list[dict[str, Any]] = (
+                (coordinator.data or {}).get("new_items") or {}
+            ).get("items", []) or []
+
+            if field == "all":
+                targets = [item["full_name"] for item in visible]
+            elif field == "category":
+                wanted = call.data["category"]
+                targets = [
+                    item["full_name"]
+                    for item in visible
+                    if item.get("category") == wanted
+                ]
+            else:  # repositories — unknown/not-currently-visible names are
+                # skipped silently rather than dismissing an arbitrary string.
+                wanted_repos = {
+                    str(r).strip().lower() for r in call.data["repositories"]
+                }
+                targets = [
+                    item["full_name"]
+                    for item in visible
+                    if item["full_name"].strip().lower() in wanted_repos
+                ]
+
+            for full_name in targets:
+                registry.dismiss(full_name)
+            await registry.async_save()
+            await coordinator.async_request_refresh()
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DISMISS_NEW_ITEMS,
+            handle_dismiss_new_items,
+            schema=NEW_ITEMS_SELECTOR_SCHEMA,
+        )
+
+    # --- restore_new_items service (#95) ---
+    if not hass.services.has_service(DOMAIN, SERVICE_RESTORE_NEW_ITEMS):
+
+        async def handle_restore_new_items(call: ServiceCall) -> None:
+            coordinator = hass.data[DOMAIN].get("coordinator")
+            if coordinator is None:
+                raise HomeAssistantError(
+                    "Custom Component Monitor is still starting up — no scan "
+                    "coordinator is available yet."
+                )
+            field = _new_items_selected_field(call.data, SERVICE_RESTORE_NEW_ITEMS)
+            registry = coordinator.new_items_registry
+
+            if field == "repositories":
+                # registry.restore() is a no-op (returns False) for a name
+                # that was never dismissed or auto-hidden, so an unknown
+                # repository is skipped without needing a membership check.
+                targets = {str(r).strip() for r in call.data["repositories"]}
+            else:
+                # category/all reach the hidden AND dismissed sets. The
+                # auto-hidden items come straight off the last scan (they
+                # carry a category); the dismissed ones are by definition not
+                # in the sensor's visible list at all, so they come from the
+                # registry's own listing.
+                hidden: list[dict[str, Any]] = (
+                    (coordinator.data or {}).get("new_items") or {}
+                ).get("hidden", []) or []
+                dismissed_keys = registry.dismissed_keys
+
+                if field == "all":
+                    targets = {item["full_name"] for item in hidden}
+                    targets.update(dismissed_keys)
+                else:  # category
+                    wanted = call.data["category"]
+                    targets = {
+                        item["full_name"]
+                        for item in hidden
+                        if item.get("category") == wanted
+                    }
+                    for key in dismissed_keys:
+                        ai_record = registry.get_ai(key)
+                        category = (
+                            ai_record["category"]
+                            if ai_record
+                            else NEW_ITEM_CATEGORY_FALLBACK
+                        )
+                        if category == wanted:
+                            targets.add(key)
+
+            for full_name in targets:
+                registry.restore(full_name)
+            await registry.async_save()
+            await coordinator.async_request_refresh()
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RESTORE_NEW_ITEMS,
+            handle_restore_new_items,
+            schema=NEW_ITEMS_SELECTOR_SCHEMA,
+        )
+
+    # --- categorise_new_items service (#95) ---
+    if not hass.services.has_service(DOMAIN, SERVICE_CATEGORISE_NEW_ITEMS):
+
+        async def handle_categorise_new_items(call: ServiceCall) -> dict[str, int]:
+            coordinator = hass.data[DOMAIN].get("coordinator")
+            if coordinator is None:
+                raise HomeAssistantError(
+                    "Custom Component Monitor is still starting up — no scan "
+                    "coordinator is available yet."
+                )
+            if not coordinator.ai_enabled:
+                raise HomeAssistantError(
+                    "AI summaries are switched off. Enable them in the Custom "
+                    "Component Monitor options and pick an AI Task or "
+                    "conversation entity first."
+                )
+            force = call.data.get("force", False)
+            if force and coordinator.data:
+                # Two things have to give way for a forced re-run: the
+                # coordinator's in-memory flag (what the batch runner queues
+                # on) and the registry's cached verdict (what it would hand
+                # back instead of calling the model). Dropping both means a
+                # forced call that fails retries next cycle rather than
+                # quietly reverting to the category being replaced.
+                registry = coordinator.new_items_registry
+                for item in (
+                    coordinator.data.get("new_items") or {}
+                ).get("items", []) or []:
+                    item["ai_pending"] = True
+                    registry.clear_ai(item["full_name"])
+                await registry.async_save()
+            return await coordinator.async_generate_new_item_categories(
+                limit=call.data.get("max_items")
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CATEGORISE_NEW_ITEMS,
+            handle_categorise_new_items,
+            schema=SERVICE_CATEGORISE_NEW_ITEMS_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
     return True
 
 
@@ -358,4 +577,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_UPDATE_ALL)
         if hass.services.has_service(DOMAIN, SERVICE_GENERATE_SUMMARIES):
             hass.services.async_remove(DOMAIN, SERVICE_GENERATE_SUMMARIES)
+        if hass.services.has_service(DOMAIN, SERVICE_DISMISS_NEW_ITEMS):
+            hass.services.async_remove(DOMAIN, SERVICE_DISMISS_NEW_ITEMS)
+        if hass.services.has_service(DOMAIN, SERVICE_RESTORE_NEW_ITEMS):
+            hass.services.async_remove(DOMAIN, SERVICE_RESTORE_NEW_ITEMS)
+        if hass.services.has_service(DOMAIN, SERVICE_CATEGORISE_NEW_ITEMS):
+            hass.services.async_remove(DOMAIN, SERVICE_CATEGORISE_NEW_ITEMS)
     return unload_ok

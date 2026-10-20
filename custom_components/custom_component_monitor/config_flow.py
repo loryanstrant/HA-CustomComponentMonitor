@@ -14,8 +14,15 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_AI_CATEGORIZATION_ENABLED,
     CONF_AI_TASK_ENTITY,
+    CONF_AUTO_HIDE_FOREIGN,
     CONF_EXCLUDE,
+    CONF_EXTRA_HOME_TERMS,
+    CONF_HOME_COUNTRY,
+    CONF_NEW_ITEMS_ENABLED,
+    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
+    DEFAULT_HOME_COUNTRY,
     DOMAIN,
+    NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +93,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if isinstance(exclude, str):
                 exclude = [exclude]
             exclude = [str(x).strip() for x in exclude if str(x).strip()]
+
+            # Multi-line text box -> a clean list of stripped, non-empty
+            # terms (#95). sensor.py reads this option as a list, so it must
+            # be stored as one, not as the raw newline-separated string.
+            extra_terms_raw = user_input.get(CONF_EXTRA_HOME_TERMS, "")
+            extra_home_terms = [
+                line.strip()
+                for line in str(extra_terms_raw or "").splitlines()
+                if line.strip()
+            ]
+
+            home_country = (
+                str(user_input.get(CONF_HOME_COUNTRY) or "").strip()
+                or getattr(self.hass.config, "country", None)
+                or DEFAULT_HOME_COUNTRY
+            )
+
             return self.async_create_entry(
                 title="",
                 data={
@@ -94,6 +118,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_AI_CATEGORIZATION_ENABLED, False
                     ),
                     CONF_AI_TASK_ENTITY: user_input.get(CONF_AI_TASK_ENTITY, ""),
+                    CONF_NEW_ITEMS_ENABLED: user_input.get(
+                        CONF_NEW_ITEMS_ENABLED, True
+                    ),
+                    CONF_AUTO_HIDE_FOREIGN: user_input.get(
+                        CONF_AUTO_HIDE_FOREIGN, True
+                    ),
+                    CONF_HOME_COUNTRY: home_country,
+                    CONF_EXTRA_HOME_TERMS: extra_home_terms,
+                    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE: int(
+                        user_input.get(
+                            CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
+                            NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE,
+                        )
+                    ),
                 },
             )
 
@@ -102,6 +140,26 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             CONF_AI_CATEGORIZATION_ENABLED, False
         )
         current_ai_entity = self.config_entry.options.get(CONF_AI_TASK_ENTITY, "")
+
+        # New in HACS (#95) — current values to pre-fill the form.
+        current_new_items_enabled = self.config_entry.options.get(
+            CONF_NEW_ITEMS_ENABLED, True
+        )
+        current_auto_hide_foreign = self.config_entry.options.get(
+            CONF_AUTO_HIDE_FOREIGN, True
+        )
+        current_home_country = self.config_entry.options.get(
+            CONF_HOME_COUNTRY
+        ) or (getattr(self.hass.config, "country", None) or DEFAULT_HOME_COUNTRY)
+        current_extra_home_terms = (
+            self.config_entry.options.get(CONF_EXTRA_HOME_TERMS) or []
+        )
+        if isinstance(current_extra_home_terms, str):
+            current_extra_home_terms = [current_extra_home_terms]
+        current_extra_home_terms_text = "\n".join(current_extra_home_terms)
+        current_max_ai_per_cycle = self.config_entry.options.get(
+            CONF_NEW_ITEMS_MAX_AI_PER_CYCLE, NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE
+        )
 
         # Offer the currently-unused component names as quick-pick options, while
         # still allowing free-text entries (custom_value) for anything else.
@@ -133,6 +191,32 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     description={"suggested_value": current_ai_entity or None},
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain=["ai_task", "conversation"])
+                ),
+                # New in HACS (#95) — review card for newly-indexed repos.
+                vol.Optional(
+                    CONF_NEW_ITEMS_ENABLED, default=current_new_items_enabled
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_AUTO_HIDE_FOREIGN, default=current_auto_hide_foreign
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_HOME_COUNTRY, default=current_home_country
+                ): selector.TextSelector(),
+                vol.Optional(
+                    CONF_EXTRA_HOME_TERMS,
+                    description={
+                        "suggested_value": current_extra_home_terms_text or None
+                    },
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(multiline=True)
+                ),
+                vol.Optional(
+                    CONF_NEW_ITEMS_MAX_AI_PER_CYCLE,
+                    default=current_max_ai_per_cycle,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1, max=50, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
             }
         )
