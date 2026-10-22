@@ -150,3 +150,30 @@ the pull request description. Key anchors:
 - New entity `sensor.hacs_new_items`; new services `dismiss_new_items`,
   `restore_new_items`, `categorise_new_items`.
 - New card `www/hacs-new-items-card.js` with an `ha-form` editor.
+
+## Addendum — shipped in 1.16.0
+
+Three changes to the row and the group header, after using the card against a real store:
+
+- **The display name is the link to GitHub**, and the separate `mdi:open-in-new` icon that
+  used to carry that link is gone — one destination, one affordance, and the row only has
+  width for two icons at 380 px. `owner/repo` is still on the name's tooltip.
+- **An install button** (`mdi:download`) on every row. It does **not** install: it navigates
+  in-app to that repository's own HACS screen, `/hacs/repository?owner=…&repository=…`,
+  where the version picker, the README and the restart prompt live. The *No installing*
+  non-goal above therefore still holds as written — the card hands the job to HACS rather
+  than doing it.
+- **`Dismiss all (n)` asks first**, in an in-card confirmation that names the category and
+  the count. The per-row cross and `Dismiss N selected` are deliberately not confirmed.
+
+Acceptance criteria added with them:
+
+- A row whose `full_name` is not exactly `owner/repo` shows no install button rather than a
+  link that resolves to the wrong repository.
+- A modified click (Ctrl/Cmd/Shift) on the install button opens a new tab and leaves the
+  dashboard where it is; a plain click navigates in-app without a full frontend reload.
+- While the confirmation is open the rest of the card is `inert`, focus starts on **Cancel**,
+  Escape cancels, and a click on the dialog's own text does nothing.
+- A sensor update arriving while the confirmation is open updates the count in its label if
+  the count changed, closes the dialog if the category emptied, and dismisses only the items
+  the label counted at the moment **Dismiss** was pressed.
