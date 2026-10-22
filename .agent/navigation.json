@@ -71,7 +71,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 252,
+      "lines": 347,
       "headings": [
         {
           "level": 2,
@@ -112,13 +112,28 @@
           "level": 2,
           "text": "2026-10-20 — Pace the AI by time spent, not by items per cycle",
           "anchor": "2026-10-20--pace-the-ai-by-time-spent-not-by-items-per-cycle"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-22 — Install is a link into HACS, not a download call",
+          "anchor": "2026-10-22--install-is-a-link-into-hacs-not-a-download-call"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-22 — The display name is the GitHub link, and the link icon went",
+          "anchor": "2026-10-22--the-display-name-is-the-github-link-and-the-link-icon-went"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-22 — Only Dismiss all is confirmed, and the confirmation is in-card",
+          "anchor": "2026-10-22--only-dismiss-all-is-confirmed-and-the-confirmation-is-in-card"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 702,
+      "lines": 706,
       "headings": [
         {
           "level": 2,
@@ -342,7 +357,7 @@
     {
       "path": "docs/specs/new-in-hacs.md",
       "title": "Spec — New in HACS: review, auto-filter and bulk-dismiss",
-      "lines": 152,
+      "lines": 179,
       "headings": [
         {
           "level": 2,
@@ -403,6 +418,11 @@
           "level": 2,
           "text": "Technical plan",
           "anchor": "technical-plan"
+        },
+        {
+          "level": 2,
+          "text": "Addendum — shipped in 1.16.0",
+          "anchor": "addendum--shipped-in-1160"
         }
       ]
     },
@@ -1660,6 +1680,12 @@
           },
           {
             "kind": "function",
+            "name": "hniHacsInstallPath",
+            "parent": "",
+            "signature": "function hniHacsInstallPath(item)"
+          },
+          {
+            "kind": "function",
             "name": "hniGroupByCategory",
             "parent": "",
             "signature": "function hniGroupByCategory(items)"
@@ -1865,8 +1891,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "95f346c7ea7e78e5013dae093432868d8878009e",
-    "content_hash": "3094e1cd75969c9c",
+    "source_commit": "fec7650f0f89154803b06b3532e9aeb62dc0a9eb",
+    "content_hash": "5d0ebab7f64a27c3",
     "generator": "navgen"
   }
 }
