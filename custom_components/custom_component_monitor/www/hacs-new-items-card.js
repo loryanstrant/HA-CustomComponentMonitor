@@ -5,7 +5,7 @@
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.15.1";
+const CARD_VERSION = "1.16.0";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -38,6 +38,40 @@ function hniFormatAge(days) {
 // display name as a fallback for a record that somehow lacks one.
 function hniItemKey(item) {
   return (item && (item.full_name || item.name)) || "";
+}
+
+/**
+ * The in-app HACS path that opens this repository's own download screen.
+ *
+ * This is HACS's documented deep link, minus the round trip: hacs/frontend's
+ * REDIRECTS map (src/hacs-my-redirect.ts) resolves
+ * my.home-assistant.io/redirect/hacs_repository to exactly
+ * "/hacs/repository?owner=&repository=&category=", and its repository
+ * dashboard looks the repo up by `owner/repository` - which is why no numeric
+ * HACS id is needed here (the sensor does not carry one). `category` is
+ * HACS's own value, so a Lovelace card is a "plugin"; it is optional in the
+ * redirect contract, hence omitted rather than guessed when `kind` is absent.
+ *
+ * Deliberately NOT the hacs/repository/download websocket command: HACS's own
+ * screen owns the version picker, the README and the "restart Home Assistant"
+ * follow-up, and it cannot install something on a mis-tap.
+ */
+function hniHacsInstallPath(item) {
+  const fullName = String((item && item.full_name) || "");
+  const slash = fullName.indexOf("/");
+  if (slash <= 0 || slash >= fullName.length - 1) return "";
+  const owner = fullName.slice(0, slash);
+  const repository = fullName.slice(slash + 1);
+  // GitHub's full_name is exactly "owner/repo". Anything with a second slash
+  // is not a shape HACS can resolve, and no button is better than one that
+  // silently opens the wrong repository.
+  if (repository.indexOf("/") !== -1) return "";
+  const params = new URLSearchParams({ owner, repository });
+  const category = item.kind === "card" ? "plugin"
+    : item.kind === "integration" ? "integration"
+    : "";
+  if (category) params.set("category", category);
+  return "/hacs/repository?" + params.toString();
 }
 
 function hniGroupByCategory(items) {
@@ -257,6 +291,15 @@ class HacsNewItemsCard extends HTMLElement {
     this._groupKeys = {}; // category -> the keys "Dismiss all (n)" counted
     this._selected = new Set(); // ticked full_name keys
     this._hiddenOpen = false;
+    // Open confirmation, as { category }. The key list is NOT captured with
+    // it: it is re-read from _groupKeys when the user confirms, so a sensor
+    // update that lands while the dialog is open cannot make the button
+    // dismiss a different set from the one its label counted.
+    this._confirm = null;
+    // The confirmation markup currently on screen. Compared before every
+    // rewrite so a sensor update that leaves the count alone does not destroy
+    // the button the user has focused.
+    this._confirmHtmlShown = "";
     this._cardSizeEstimate = 5;
   }
 
@@ -331,6 +374,7 @@ class HacsNewItemsCard extends HTMLElement {
       '<div class="groups"></div>' +
       '<button type="button" class="show-hidden-btn"></button>' +
       '<div class="hidden-audit"></div>' +
+      '<div class="confirm-overlay"></div>' +
       "</ha-card>";
     this._els = {
       card: this.shadowRoot.querySelector("ha-card"),
@@ -341,8 +385,18 @@ class HacsNewItemsCard extends HTMLElement {
       groups: this.shadowRoot.querySelector(".groups"),
       showHiddenBtn: this.shadowRoot.querySelector(".show-hidden-btn"),
       hiddenAudit: this.shadowRoot.querySelector(".hidden-audit"),
+      confirmOverlay: this.shadowRoot.querySelector(".confirm-overlay"),
     };
     this._els.card.addEventListener("click", (e) => this._onCardClick(e));
+    // Escape closes the confirmation. Bound on the same persistent element as
+    // the click delegate: focus lives inside the dialog, which is a descendant,
+    // so the keydown bubbles here.
+    this._els.card.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this._confirm) {
+        e.stopPropagation();
+        this._closeConfirm();
+      }
+    });
     this._shellBuilt = true;
   }
 
@@ -350,10 +404,43 @@ class HacsNewItemsCard extends HTMLElement {
      re-renders of the containers above never need to re-bind listeners. -- */
 
   _onCardClick(e) {
+    /* The confirmation comes first and takes the whole card: the rest of the
+       shell is inert while it is open, so the only clicks that reach here are
+       its own two buttons, its text, and the backdrop. */
+    if (this._confirm) {
+      if (e.target.closest('[data-action="confirm-ok"]')) {
+        const category = this._confirm.category;
+        this._closeConfirm();
+        this._handleDismissCategory(category);
+        return;
+      }
+      // Cancel on the button or on the backdrop. A click on the dialog's own
+      // title or body text is neither, and must not close it - a user reading
+      // or selecting the sentence has not answered the question.
+      if (e.target.closest('[data-action="confirm-cancel"]') || !e.target.closest(".confirm-box")) {
+        this._closeConfirm();
+      }
+      return;
+    }
+    /* Install: keep it inside the app. A plain <a href> to a Home Assistant
+       panel costs a full frontend reload, so the anchor's default is
+       cancelled and the same pushState + "location-changed" pair HA's own
+       navigate() uses is fired instead. */
+    const installBtn = e.target.closest("[data-install]");
+    if (installBtn) {
+      /* Modified clicks belong to the browser. Ctrl/Cmd/Shift-click fires an
+         ordinary "click", so without this guard preventDefault would eat the
+         user's "open in a new tab" and drag the current tab off the dashboard
+         instead. (True middle-click fires "auxclick", which never gets here.) */
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      this._navigate(installBtn.getAttribute("data-install"));
+      return;
+    }
     const dismissAllBtn = e.target.closest("[data-dismiss-all]");
     if (dismissAllBtn) {
       e.stopPropagation();
-      this._handleDismissCategory(dismissAllBtn.getAttribute("data-dismiss-all"));
+      this._askDismissCategory(dismissAllBtn.getAttribute("data-dismiss-all"));
       return;
     }
     const groupHeader = e.target.closest("[data-toggle-group]");
@@ -416,8 +503,35 @@ class HacsNewItemsCard extends HTMLElement {
     }
   }
 
+  /** In-app navigation, the way HA's own navigate() does it. */
+  _navigate(path) {
+    if (!path) return;
+    window.history.pushState(null, "", path);
+    window.dispatchEvent(new CustomEvent("location-changed", {
+      detail: { replace: false },
+    }));
+  }
+
+  /**
+   * Put "Dismiss all (n)" behind a confirmation.
+   *
+   * Only this bulk action is guarded: it sits one tap away in a group header,
+   * next to the collapse toggle, and a mis-tap silently clears a whole
+   * category. The single-row cross and "Dismiss n selected" are already
+   * deliberate - the latter needs every row ticked first - so confirming
+   * those would be nagging rather than protection.
+   */
+  _askDismissCategory(category) {
+    if (!category) return;
+    if (!(this._groupKeys[category] || []).filter(Boolean).length) return;
+    this._confirm = { category };
+    this._renderConfirm();
+  }
+
   /**
    * "Dismiss all (n)" dismisses exactly the n items the button counted.
+   *
+   * Only reachable through _askDismissCategory's confirmation.
    *
    * It sends the explicit list of keys recorded for the group at render time,
    * NOT { category }: the count on the button comes from the type-filtered
@@ -585,6 +699,9 @@ class HacsNewItemsCard extends HTMLElement {
       this._els.showHiddenBtn.style.display = "none";
       this._els.hiddenAudit.innerHTML = "";
     }
+
+    // Last, because it reads the _groupKeys this pass just rebuilt.
+    this._renderConfirm();
   }
 
   _renderUnavailable() {
@@ -598,7 +715,89 @@ class HacsNewItemsCard extends HTMLElement {
     this._els.groups.innerHTML = '<div class="empty-state">"' + entityId + '" is not available.</div>';
     this._els.showHiddenBtn.style.display = "none";
     this._els.hiddenAudit.innerHTML = "";
+    this._confirm = null;
+    this._renderConfirm();
     this._cardSizeEstimate = 3;
+  }
+
+  /* -- Confirmation dialog ------------------------------------------
+     Its own render pass, called both from _renderDynamic (so a sensor
+     update refreshes the count in the label instead of stranding a stale
+     one) and straight from the click handler (so opening and closing it
+     costs nothing but this one container). -- */
+
+  _closeConfirm() {
+    this._confirm = null;
+    this._renderConfirm();
+  }
+
+  /**
+   * Make everything behind the dialog inert while it is open.
+   *
+   * This is the focus trap, and it is the markup's job rather than a keydown
+   * handler's: the overlay is the LAST child of <ha-card>, so without it Tab
+   * walks every row checkbox and dismiss button still in the DOM - invisible
+   * under the backdrop but entirely focusable - before reaching Cancel.
+   * `inert` also takes the background out of the accessibility tree, which is
+   * what aria-modal promises and cannot deliver on its own.
+   */
+  _setBackgroundInert(on) {
+    for (const child of Array.from(this._els.card.children)) {
+      if (child === this._els.confirmOverlay) continue;
+      if (on) { child.setAttribute("inert", ""); }
+      else { child.removeAttribute("inert"); }
+    }
+  }
+
+  _renderConfirm() {
+    if (!this._els) return;
+    const category = this._confirm && this._confirm.category;
+    const keys = category ? (this._groupKeys[category] || []).filter(Boolean) : [];
+    if (!category || !keys.length) {
+      // Nothing left to dismiss - the items went while the dialog was open.
+      this._confirm = null;
+      if (this._confirmHtmlShown) {
+        this._confirmHtmlShown = "";
+        this._els.confirmOverlay.classList.remove("visible");
+        this._els.confirmOverlay.innerHTML = "";
+        this._setBackgroundInert(false);
+      }
+      return;
+    }
+    const html = this._confirmHtml(category, keys.length);
+    // Rewrite only when the dialog's own content changed. A sensor update that
+    // leaves the count alone must not replace - and so un-focus - the button
+    // the user is on.
+    if (html === this._confirmHtmlShown) return;
+    this._confirmHtmlShown = html;
+    this._els.confirmOverlay.innerHTML = html;
+    this._els.confirmOverlay.classList.add("visible");
+    this._setBackgroundInert(true);
+    // Focus the safe option, so a keyboard user lands in the dialog rather
+    // than on the now-inert button that opened it, and Escape/Enter both do
+    // something sensible from the first keystroke.
+    const cancel = this._els.confirmOverlay.querySelector('[data-action="confirm-cancel"]');
+    if (cancel) cancel.focus();
+  }
+
+  _confirmHtml(category, count) {
+    const noun = count === 1 ? "item" : "items";
+    return (
+      '<div class="confirm-box" role="alertdialog" aria-modal="true"' +
+      ' aria-labelledby="confirm-title" aria-describedby="confirm-text">' +
+      '<div class="confirm-title" id="confirm-title">Dismiss all ' + count + " in " +
+      hniEscapeHtml(category) + "?</div>" +
+      '<div class="confirm-text" id="confirm-text">' + count + " " + noun +
+      " will stop appearing on this card. Bringing one back takes the restore" +
+      " action, not a tap." +
+      "</div>" +
+      '<div class="confirm-actions">' +
+      '<button type="button" class="btn btn-text" data-action="confirm-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-danger" data-action="confirm-ok">Dismiss ' +
+      count + "</button>" +
+      "</div>" +
+      "</div>"
+    );
   }
 
   _filtersHtml(items) {
@@ -665,9 +864,24 @@ class HacsNewItemsCard extends HTMLElement {
       ? '<div class="item-desc">' + hniEscapeHtml(item.description) + "</div>"
       : '<div class="item-desc muted">No description provided</div>';
 
+    /* The name IS the GitHub link now, which is what retired the separate
+       mdi:open-in-new button: two affordances for one destination, and the
+       row only has width for two icons at 380px. The tooltip still carries
+       "owner/repo", the only place left to see which repository this is
+       without following the link. */
     const repoUrl = item.repository || "";
-    const repoLinkHtml = repoUrl
-      ? '<a class="icon-btn" href="' + hniAttr(hniEscapeHtml(repoUrl)) + '" target="_blank" rel="noopener noreferrer" title="Open repository"><ha-icon icon="mdi:open-in-new"></ha-icon></a>'
+    const nameTitle = hniAttr(hniEscapeHtml(item.full_name || item.name || ""));
+    const nameHtml = repoUrl
+      ? '<a class="item-name" href="' + hniAttr(hniEscapeHtml(repoUrl)) +
+        '" target="_blank" rel="noopener noreferrer" title="' + nameTitle +
+        ' - open on GitHub">' + name + "</a>"
+      : '<span class="item-name" title="' + nameTitle + '">' + name + "</span>";
+
+    const installPath = hniHacsInstallPath(item);
+    const installHtml = installPath
+      ? '<a class="icon-btn install" href="' + hniAttr(hniEscapeHtml(installPath)) +
+        '" data-install="' + hniAttr(hniEscapeHtml(installPath)) +
+        '" title="Install with HACS"><ha-icon icon="mdi:download"></ha-icon></a>'
       : "";
 
     return (
@@ -677,17 +891,14 @@ class HacsNewItemsCard extends HTMLElement {
       "</div>" +
       '<div class="item-body">' +
       '<div class="item-top">' +
-      // The tooltip carries "owner/repo": the visible line is now HACS's
-      // display name, so this is the only place left to see which repository
-      // it actually is without opening the link.
-      '<span class="item-name" title="' + hniAttr(hniEscapeHtml(item.full_name || item.name || "")) + '">' + name + "</span>" +
+      nameHtml +
       '<span class="kind-chip">' + kindLabel + "</span>" +
       "</div>" +
       '<div class="item-meta">' + metaText + "</div>" +
       descHtml +
       "</div>" +
       '<div class="item-actions">' +
-      repoLinkHtml +
+      installHtml +
       '<button type="button" class="icon-btn dismiss" data-dismiss-item="' + keyAttr + '" title="Dismiss"><ha-icon icon="mdi:close"></ha-icon></button>' +
       "</div>" +
       "</div>"
@@ -748,6 +959,19 @@ class HacsNewItemsCard extends HTMLElement {
       ".btn:hover { opacity:0.85; }",
       ".btn-primary { background:var(--hni-accent); color:#fff; }",
       ".btn-text { background:none; color:var(--hni-secondary); padding:8px 10px; }",
+      ".btn-danger { background:var(--hni-error); color:#fff; }",
+      /* Dismiss-all confirmation. Fixed rather than absolute: a card with
+         several groups open is taller than the screen, and an overlay
+         centred on the *card* would open off-view from the group the user
+         just tapped. Fixed positioning puts it where HA's own dialogs are. */
+      ".confirm-overlay { display:none; position:fixed; inset:0; z-index:10; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,0.4); }",
+      ".confirm-overlay.visible { display:flex; }",
+      ".confirm-box { width:100%; max-width:320px; box-sizing:border-box; background:var(--card-background-color, #fff); color:var(--hni-primary); border:1px solid var(--hni-divider); border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,0.3); }",
+      ".confirm-title { font-size:1em; font-weight:500; }",
+      ".confirm-text { font-size:0.85em; color:var(--hni-secondary); line-height:1.4; margin-top:6px; }",
+      ".confirm-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:16px; }",
+      /* Cancel takes focus when the dialog opens, so that focus must be visible. */
+      ".confirm-box .btn:focus-visible { outline:2px solid var(--hni-accent); outline-offset:2px; }",
       /* Category groups - same idiom as .section/.section-header in
          custom-component-monitor-card.js */
       ".group { border-bottom:1px solid var(--hni-divider); }",
@@ -769,6 +993,14 @@ class HacsNewItemsCard extends HTMLElement {
       ".item-body { flex:1; min-width:0; }",
       ".item-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }",
       ".item-name { font-size:0.95em; font-weight:500; color:var(--hni-primary); flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }",
+      /* The name is an <a> to GitHub. It carries a quiet underline at rest
+         rather than only on hover: a touch user never hovers, so a
+         hover-only affordance is no affordance at all on the device this
+         card is mostly read on. The vertical padding (cancelled by an equal
+         negative margin, so the row does not grow) widens the tap target
+         past the text's own bounding box. */
+      "a.item-name { cursor:pointer; padding:3px 0; margin:-3px 0; text-decoration:underline; text-decoration-color:rgba(127,127,127,0.55); text-underline-offset:2px; }",
+      "a.item-name:hover, a.item-name:focus-visible { color:var(--hni-accent); text-decoration-color:currentColor; }",
       /* Kind chip - same idiom as .cat-badge (AI category pill) in
          update-action-tracker-card.js */
       ".kind-chip { font-size:0.66em; font-weight:600; padding:2px 7px; border-radius:10px; white-space:nowrap; color:var(--hni-secondary); background:var(--hni-row-bg, rgba(127,127,127,0.12)); border:1px solid var(--divider-color, rgba(127,127,127,0.28)); flex-shrink:0; }",
@@ -778,6 +1010,8 @@ class HacsNewItemsCard extends HTMLElement {
       ".item-actions { display:flex; align-items:center; gap:2px; flex-shrink:0; margin-top:1px; }",
       ".icon-btn { background:none; border:none; cursor:pointer; color:var(--hni-secondary); padding:4px 6px; line-height:1; border-radius:4px; --mdc-icon-size:18px; display:inline-flex; }",
       ".icon-btn:hover { background:rgba(127,127,127,0.12); color:var(--hni-primary); }",
+      ".icon-btn.install { color:var(--hni-accent); }",
+      ".icon-btn.install:hover { color:var(--hni-accent); background:rgba(var(--rgb-primary-color, 3,169,244), 0.12); }",
       ".icon-btn.dismiss:hover { color:var(--hni-error); }",
       ".empty-state { padding:16px 8px; font-size:0.85em; color:var(--hni-secondary); font-style:italic; }",
       /* Footer / hidden audit */
@@ -801,6 +1035,7 @@ class HacsNewItemsCard extends HTMLElement {
       "  .selection-bar { flex-direction:column; align-items:stretch; }",
       "  .sel-actions { flex-direction:column; align-items:stretch; }",
       "  .btn { width:100%; text-align:center; }",
+      "  .confirm-actions { flex-direction:column; align-items:stretch; }",
       "}",
     ].join("\n");
   }

@@ -437,12 +437,16 @@ Every option below is available in the visual editor — no YAML required.
 - Hides items matching your home country (with an audit list showing the match)
 - Groups items alphabetically by what they do, with "Other" pinned last
 - Filter chips for All / Integrations / Cards
-- **Dismiss all (n)** button per group, or tick individual items and **Dismiss N selected**
+- **Dismiss all (n)** button per group — it asks for confirmation first — or tick individual
+  items and **Dismiss N selected**
 - Shows each item's display name, not its repository slug — the same name the HACS panel
-  shows, with `owner/repo` on the tooltip and behind the GitHub link (see
+  shows, with `owner/repo` on the tooltip (see
   [Where the names come from](#where-the-names-come-from))
+- **The name is a link to the repository on GitHub**, opened in a new tab
+- **Install button** per item — opens that repository's own HACS download screen, where the
+  version picker, the README and the restart prompt all live
 - Shows stars, downloads, age and a two-line description per item
-- Repository links and single-item dismiss buttons
+- Single-item dismiss button on every row
 - **Show hidden (n)** reveals country-hidden items with the matched term and field, plus a **Restore** button
 
 #### Where the names come from
@@ -463,7 +467,7 @@ Step 3 goes slightly further than HACS's version, which lower-cases anything it 
 capitalise itself: `ha-checklist-card` becomes **Checklist Card** rather than "Ha Checklist
 Card", `ScentAirHABridge` becomes **Scent Air HA Bridge** rather than "Scentairhabridge",
 and `pv_management` becomes **PV Management**. The `owner/repo` the item actually lives at
-is still there on the row's tooltip and behind the GitHub link.
+is still there on the row's tooltip, and the name itself links to the repository on GitHub.
 
 #### Sensor: `sensor.hacs_new_items`
 

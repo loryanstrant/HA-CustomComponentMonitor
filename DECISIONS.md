@@ -250,3 +250,98 @@ makes a transient fault permanent, and in a Home Assistant integration "permanen
 means until the user restarts Home Assistant, which they have no reason to connect to
 a slow card. The test that earns its keep here is the one that fails a wave on purpose
 and then checks the size climbs back.
+
+## 2026-10-22 — Install is a link into HACS, not a download call
+
+The install button on a New in HACS row navigates to
+`/hacs/repository?owner=<owner>&repository=<repo>&category=<integration|plugin>`
+and stops there. It does not call HACS's `hacs/repository/download` websocket
+command, which is the other thing it could have done.
+
+That route is current and it is the one HACS publishes: hacs/frontend's
+`REDIRECTS` map (`src/hacs-my-redirect.ts`) resolves
+`my.home-assistant.io/redirect/hacs_repository` to exactly that path, and its
+repository dashboard resolves the repo by `owner/repository` rather than by the
+numeric HACS id — which matters, because the sensor does not carry one. HACS
+removed its install *services* some releases ago, so there is no supported
+service call left to make; the websocket command is the only programmatic route
+and it is internal.
+
+Calling it would also have meant owning three things that are HACS's: which
+version to install (the command takes one), showing the README before the user
+commits, and the "restart Home Assistant" follow-up that an integration install
+needs and a card install does not. Reimplementing those in a monitoring card is
+how a monitor becomes a package manager. And a one-tap install sitting next to a
+one-tap dismiss, on a row that is deliberately small, is a mis-tap that installs
+something.
+
+`category` is optional in the redirect contract, so it is omitted rather than
+guessed when the item's kind is unknown — HACS resolves the repository without
+it. Note HACS's own vocabulary here: a Lovelace card is a `plugin`, not a
+`card`; the card's `kind` is translated at the boundary.
+
+The navigation itself is `history.pushState` plus a `location-changed` event,
+which is what Home Assistant's own `navigate()` does. A plain `<a href>` to an
+HA panel costs a full frontend reload. The `href` is still a real one, so
+middle-click, "open in new tab" and the browser's status bar all keep working —
+the click handler cancels the default, it does not replace the anchor.
+
+**Lesson:** when the upstream app has a screen for the thing you are about to
+do, link to the screen. The version picker, the docs and the restart prompt are
+not incidental chrome around the install — they *are* the install, and a button
+that skips them is not a shortcut, it is a different and worse operation.
+
+## 2026-10-22 — The display name is the GitHub link, and the link icon went
+
+The row used to carry an `mdi:open-in-new` button that opened the repository on
+GitHub. The name is now that link, and the icon is gone — not kept alongside.
+
+Two affordances for one destination is a question the user has to answer every
+time ("do those go to the same place?"), and the honest answer was yes. The
+deciding constraint was width: at 380 px the row has space for about two icon
+buttons, and the install button needed one of them. Keeping both would have
+meant three icons and a wrapped row, to offer a second route to a destination
+that already had one.
+
+The tooltip still carries `owner/repo`. That is now the only place to see which
+repository a row actually is without following the link, which is exactly why it
+was kept when the name stopped being the slug.
+
+**Lesson:** a new control is a reason to re-examine the old ones, not just a
+reason to find space. The question is not "where does this fit" but "what is now
+redundant" — and on a dense row, redundancy costs more than the feature earns.
+
+## 2026-10-22 — Only Dismiss all is confirmed, and the confirmation is in-card
+
+"Dismiss all (n)" sits one tap from the collapse toggle in a group header, and a
+mis-tap silently clears an entire category. It now asks first, with a dialog that
+names the category and the count: *Dismiss all 3 in Energy & solar?*
+
+The other two dismiss paths are not guarded and should not be. The single-row
+cross removes one item that the user is looking at. "Dismiss N selected" requires
+every one of those rows to have been ticked first, which is as deliberate as an
+action gets. Confirming those would be nagging, and a confirmation that fires on
+safe actions is a confirmation people learn to dismiss without reading — which
+is precisely the reflex that makes the dangerous one useless.
+
+The dialog is drawn inside the card rather than with `window.confirm`, which is
+unstyled, blocking, and looks like a browser error in a Home Assistant dashboard;
+`ha-dialog` would mean depending on an internal frontend element from a card that
+otherwise has no HA dependencies beyond `ha-card` and `ha-icon`. It is
+`position: fixed`, not `absolute`: a card with several groups expanded is taller
+than the screen, so an overlay centred on the *card* would open off-view from the
+group the user just tapped.
+
+Two details that are not cosmetic. The overlay is a child of the persistent
+`<ha-card>` shell and is rendered by replacing only its own `innerHTML`, like
+every other dynamic region — the shell is still built exactly once, so card-mod
+styling survives. And the confirmation stores only the category, never the list
+of keys: the keys are re-read when the user confirms. A sensor update landing
+while the dialog is open therefore cannot make the button dismiss a different set
+from the one its label counted; if the category empties in the meantime, the
+dialog closes itself rather than confirming nothing.
+
+**Lesson:** a confirmation dialog that captures its payload when it opens is a
+race with whatever refreshes behind it. Capture the *selector*, resolve it on
+confirm, and the dialog can never act on stale data — or re-render the label
+against data it is no longer going to use.
