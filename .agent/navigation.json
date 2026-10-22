@@ -1,0 +1,1872 @@
+{
+  "schema_version": "1.0",
+  "repository": "HA-CustomComponentMonitor",
+  "identity": {
+    "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
+    "default_branch": "main",
+    "languages": {
+      "Python": 25,
+      "JavaScript": 4
+    },
+    "topics": [],
+    "licence": "MIT License",
+    "file_count": 64
+  },
+  "start_here": {
+    "readme": "README.md",
+    "agents_md": "AGENTS.md",
+    "entry_points": [],
+    "decision_records": [
+      "DECISIONS.md"
+    ],
+    "build_config": [
+      "custom_components/custom_component_monitor/manifest.json",
+      "hacs.json",
+      "pytest.ini"
+    ],
+    "source_roots": [
+      "custom_components"
+    ]
+  },
+  "documentation": [
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "title": "Bug Report",
+      "lines": 20,
+      "headings": []
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.md",
+      "title": "Feature Request",
+      "lines": 20,
+      "headings": []
+    },
+    {
+      "path": ".github/copilot-instructions.md",
+      "title": "Copilot instructions — HA-CustomComponentMonitor",
+      "lines": 37,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What this repo is",
+          "anchor": "what-this-repo-is"
+        },
+        {
+          "level": 2,
+          "text": "Repo shape",
+          "anchor": "repo-shape"
+        },
+        {
+          "level": 2,
+          "text": "Conventions",
+          "anchor": "conventions"
+        },
+        {
+          "level": 2,
+          "text": "Never",
+          "anchor": "never"
+        }
+      ]
+    },
+    {
+      "path": "DECISIONS.md",
+      "title": "Decisions",
+      "lines": 252,
+      "headings": [
+        {
+          "level": 2,
+          "text": "2026-08-23 — The card editors are built on ha-form",
+          "anchor": "2026-08-23--the-card-editors-are-built-on-ha-form"
+        },
+        {
+          "level": 2,
+          "text": "2026-08-23 — One editor per card, not one shared editor keyed by card type",
+          "anchor": "2026-08-23--one-editor-per-card-not-one-shared-editor-keyed-by-card-type"
+        },
+        {
+          "level": 2,
+          "text": "2026-08-23 — The editor writes nothing the user did not choose",
+          "anchor": "2026-08-23--the-editor-writes-nothing-the-user-did-not-choose"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-20 — New in HACS: automatic hiding, not flagging",
+          "anchor": "2026-10-20--new-in-hacs-automatic-hiding-not-flagging"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-20 — What the country filter treats as evidence, and what the sensor publishes",
+          "anchor": "2026-10-20--what-the-country-filter-treats-as-evidence-and-what-the-sensor-publishes"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-20 — A hide only persists if the place that decides visibility re-derives it",
+          "anchor": "2026-10-20--a-hide-only-persists-if-the-place-that-decides-visibility-re-derives-it"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-20 — A name HACS \"already has\" is a name HACS generates at display time",
+          "anchor": "2026-10-20--a-name-hacs-already-has-is-a-name-hacs-generates-at-display-time"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-20 — Pace the AI by time spent, not by items per cycle",
+          "anchor": "2026-10-20--pace-the-ai-by-time-spent-not-by-items-per-cycle"
+        }
+      ]
+    },
+    {
+      "path": "README.md",
+      "title": "Home Assistant Custom Component Monitor",
+      "lines": 702,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Overview",
+          "anchor": "overview"
+        },
+        {
+          "level": 2,
+          "text": "Screenshots",
+          "anchor": "screenshots"
+        },
+        {
+          "level": 3,
+          "text": "Custom Component Monitor card",
+          "anchor": "custom-component-monitor-card"
+        },
+        {
+          "level": 3,
+          "text": "HACS Update Action Tracker card",
+          "anchor": "hacs-update-action-tracker-card"
+        },
+        {
+          "level": 3,
+          "text": "AI update summaries & categories",
+          "anchor": "ai-update-summaries--categories"
+        },
+        {
+          "level": 3,
+          "text": "Update selected",
+          "anchor": "update-selected"
+        },
+        {
+          "level": 2,
+          "text": "Features",
+          "anchor": "features"
+        },
+        {
+          "level": 3,
+          "text": "Custom Component Monitor",
+          "anchor": "custom-component-monitor"
+        },
+        {
+          "level": 3,
+          "text": "HACS Update Action Tracker",
+          "anchor": "hacs-update-action-tracker"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "anchor": "installation"
+        },
+        {
+          "level": 3,
+          "text": "HACS (Recommended)",
+          "anchor": "hacs-recommended"
+        },
+        {
+          "level": 3,
+          "text": "Manual Installation",
+          "anchor": "manual-installation"
+        },
+        {
+          "level": 2,
+          "text": "Entities",
+          "anchor": "entities"
+        },
+        {
+          "level": 3,
+          "text": "Sensor Attributes",
+          "anchor": "sensor-attributes"
+        },
+        {
+          "level": 3,
+          "text": "To-do Entity",
+          "anchor": "to-do-entity"
+        },
+        {
+          "level": 2,
+          "text": "Dashboard Cards",
+          "anchor": "dashboard-cards"
+        },
+        {
+          "level": 3,
+          "text": "Custom Component Monitor Card",
+          "anchor": "custom-component-monitor-card-1"
+        },
+        {
+          "level": 3,
+          "text": "HACS Update Action Tracker Card",
+          "anchor": "hacs-update-action-tracker-card-1"
+        },
+        {
+          "level": 3,
+          "text": "Recently installed but unused card",
+          "anchor": "recently-installed-but-unused-card"
+        },
+        {
+          "level": 3,
+          "text": "New in HACS card",
+          "anchor": "new-in-hacs-card"
+        },
+        {
+          "level": 2,
+          "text": "Services",
+          "anchor": "services-1"
+        },
+        {
+          "level": 3,
+          "text": "custom_component_monitor.scan_now",
+          "anchor": "custom_component_monitorscan_now"
+        },
+        {
+          "level": 3,
+          "text": "custom_component_monitor.update_and_action",
+          "anchor": "custom_component_monitorupdate_and_action"
+        },
+        {
+          "level": 3,
+          "text": "custom_component_monitor.update_all",
+          "anchor": "custom_component_monitorupdate_all"
+        },
+        {
+          "level": 3,
+          "text": "custom_component_monitor.generate_summaries",
+          "anchor": "custom_component_monitorgenerate_summaries"
+        },
+        {
+          "level": 2,
+          "text": "Migration from HACS Update Action Tracker",
+          "anchor": "migration-from-hacs-update-action-tracker"
+        },
+        {
+          "level": 2,
+          "text": "How Detection Works",
+          "anchor": "how-detection-works"
+        },
+        {
+          "level": 3,
+          "text": "Integrations",
+          "anchor": "integrations"
+        },
+        {
+          "level": 3,
+          "text": "Themes",
+          "anchor": "themes"
+        },
+        {
+          "level": 3,
+          "text": "Frontend Cards",
+          "anchor": "frontend-cards"
+        },
+        {
+          "level": 3,
+          "text": "HACS Updates",
+          "anchor": "hacs-updates"
+        },
+        {
+          "level": 2,
+          "text": "Contributing",
+          "anchor": "contributing"
+        },
+        {
+          "level": 2,
+          "text": "Development Approach",
+          "anchor": "development-approach"
+        },
+        {
+          "level": 2,
+          "text": "License",
+          "anchor": "license"
+        },
+        {
+          "level": 2,
+          "text": "Support",
+          "anchor": "support"
+        }
+      ]
+    },
+    {
+      "path": "docs/specs/card-editor-ha-form.md",
+      "title": "Spec — Card editors on ha-form",
+      "lines": 148,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Problem",
+          "anchor": "problem"
+        },
+        {
+          "level": 2,
+          "text": "Scope",
+          "anchor": "scope"
+        },
+        {
+          "level": 2,
+          "text": "Constraints found before designing",
+          "anchor": "constraints-found-before-designing"
+        },
+        {
+          "level": 2,
+          "text": "Flow",
+          "anchor": "flow"
+        },
+        {
+          "level": 3,
+          "text": "Fields",
+          "anchor": "fields"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance criteria",
+          "anchor": "acceptance-criteria"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals",
+          "anchor": "non-goals"
+        }
+      ]
+    },
+    {
+      "path": "docs/specs/new-in-hacs.md",
+      "title": "Spec — New in HACS: review, auto-filter and bulk-dismiss",
+      "lines": 152,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Problem",
+          "anchor": "problem"
+        },
+        {
+          "level": 2,
+          "text": "Goal",
+          "anchor": "goal"
+        },
+        {
+          "level": 2,
+          "text": "Decisions taken (2026-10-20)",
+          "anchor": "decisions-taken-2026-10-20"
+        },
+        {
+          "level": 2,
+          "text": "Flow",
+          "anchor": "flow"
+        },
+        {
+          "level": 3,
+          "text": "First run",
+          "anchor": "first-run"
+        },
+        {
+          "level": 3,
+          "text": "Reviewing",
+          "anchor": "reviewing"
+        },
+        {
+          "level": 3,
+          "text": "Afterwards",
+          "anchor": "afterwards"
+        },
+        {
+          "level": 2,
+          "text": "Acceptance criteria",
+          "anchor": "acceptance-criteria"
+        },
+        {
+          "level": 2,
+          "text": "Category set",
+          "anchor": "category-set"
+        },
+        {
+          "level": 2,
+          "text": "Non-goals",
+          "anchor": "non-goals"
+        },
+        {
+          "level": 2,
+          "text": "Known limitations",
+          "anchor": "known-limitations"
+        },
+        {
+          "level": 2,
+          "text": "Technical plan",
+          "anchor": "technical-plan"
+        }
+      ]
+    },
+    {
+      "path": "info.md",
+      "title": "Custom Component Monitor",
+      "lines": 41,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Features",
+          "anchor": "features"
+        },
+        {
+          "level": 2,
+          "text": "Sensors",
+          "anchor": "sensors"
+        },
+        {
+          "level": 2,
+          "text": "Dashboard Card",
+          "anchor": "dashboard-card"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "anchor": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Support",
+          "anchor": "support"
+        }
+      ]
+    }
+  ],
+  "code": {
+    "source_roots": [
+      "custom_components"
+    ],
+    "symbol_source": "repomix (tree-sitter signatures)",
+    "routes": [],
+    "files": [
+      {
+        "path": "custom_components/custom_component_monitor/__init__.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "PLATFORMS",
+            "parent": "",
+            "signature": "PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.TODO]"
+          },
+          {
+            "kind": "const",
+            "name": "CARD_JS",
+            "parent": "",
+            "signature": "CARD_JS = \"custom-component-monitor-card.js\""
+          },
+          {
+            "kind": "const",
+            "name": "CARD_BASE_PATH",
+            "parent": "",
+            "signature": "CARD_BASE_PATH = f\"/local/{DOMAIN}/{CARD_JS}\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_SCAN_NOW",
+            "parent": "",
+            "signature": "SERVICE_SCAN_NOW = \"scan_now\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_UPDATE_AND_ACTION_SCHEMA",
+            "parent": "",
+            "signature": "SERVICE_UPDATE_AND_ACTION_SCHEMA = vol.Schema("
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_GENERATE_SUMMARIES_SCHEMA",
+            "parent": "",
+            "signature": "SERVICE_GENERATE_SUMMARIES_SCHEMA = vol.Schema("
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_SELECTOR_SCHEMA",
+            "parent": "",
+            "signature": "NEW_ITEMS_SELECTOR_SCHEMA = vol.Schema("
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_CATEGORISE_NEW_ITEMS_SCHEMA",
+            "parent": "",
+            "signature": "SERVICE_CATEGORISE_NEW_ITEMS_SCHEMA = vol.Schema("
+          },
+          {
+            "kind": "const",
+            "name": "CONFIG_SCHEMA",
+            "parent": "",
+            "signature": "CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)"
+          },
+          {
+            "kind": "function",
+            "name": "async_setup",
+            "parent": "",
+            "signature": "async_setup(hass: HomeAssistant, config: ConfigType) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "async_setup_entry",
+            "parent": "",
+            "signature": "async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "handle_scan_now",
+            "parent": "",
+            "signature": "handle_scan_now(call: ServiceCall) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "handle_update_and_action",
+            "parent": "",
+            "signature": "handle_update_and_action(call: ServiceCall) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "handle_update_all",
+            "parent": "",
+            "signature": "handle_update_all(call: ServiceCall) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "handle_generate_summaries",
+            "parent": "",
+            "signature": "handle_generate_summaries(call: ServiceCall) -> dict[str, int]"
+          },
+          {
+            "kind": "function",
+            "name": "handle_dismiss_new_items",
+            "parent": "",
+            "signature": "handle_dismiss_new_items(call: ServiceCall) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "handle_restore_new_items",
+            "parent": "",
+            "signature": "handle_restore_new_items(call: ServiceCall) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "handle_categorise_new_items",
+            "parent": "",
+            "signature": "handle_categorise_new_items(call: ServiceCall) -> dict[str, int]"
+          },
+          {
+            "kind": "function",
+            "name": "async_unload_entry",
+            "parent": "",
+            "signature": "async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/config_flow.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "STEP_USER_DATA_SCHEMA",
+            "parent": "",
+            "signature": "STEP_USER_DATA_SCHEMA = vol.Schema({})"
+          },
+          {
+            "kind": "class",
+            "name": "PlaceholderHub",
+            "parent": "",
+            "signature": "class PlaceholderHub"
+          },
+          {
+            "kind": "function",
+            "name": "authenticate",
+            "parent": "PlaceholderHub",
+            "signature": "authenticate(self, username: str, password: str) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "validate_input",
+            "parent": "",
+            "signature": "validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]"
+          },
+          {
+            "kind": "class",
+            "name": "ConfigFlow",
+            "parent": "",
+            "signature": "class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)"
+          },
+          {
+            "kind": "class",
+            "name": "OptionsFlowHandler",
+            "parent": "",
+            "signature": "class OptionsFlowHandler(config_entries.OptionsFlow)"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/const.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "DOMAIN",
+            "parent": "",
+            "signature": "DOMAIN = \"custom_component_monitor\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_ALL_COMPONENTS",
+            "parent": "",
+            "signature": "SENSOR_ALL_COMPONENTS = \"all_hacs_components\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_UNUSED_INTEGRATIONS",
+            "parent": "",
+            "signature": "SENSOR_UNUSED_INTEGRATIONS = \"unused_integrations\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_UNUSED_THEMES",
+            "parent": "",
+            "signature": "SENSOR_UNUSED_THEMES = \"unused_themes\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_UNUSED_FRONTEND",
+            "parent": "",
+            "signature": "SENSOR_UNUSED_FRONTEND = \"unused_frontend\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_HACS_UPDATES",
+            "parent": "",
+            "signature": "SENSOR_HACS_UPDATES = \"hacs_updates\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_COMPONENTS",
+            "parent": "",
+            "signature": "ATTR_COMPONENTS = \"components\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_TOTAL_COMPONENTS",
+            "parent": "",
+            "signature": "ATTR_TOTAL_COMPONENTS = \"total_components\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_USED_COMPONENTS",
+            "parent": "",
+            "signature": "ATTR_USED_COMPONENTS = \"used_components\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_UNUSED_COMPONENTS",
+            "parent": "",
+            "signature": "ATTR_UNUSED_COMPONENTS = \"unused_components\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_EXCLUDED_COMPONENTS",
+            "parent": "",
+            "signature": "ATTR_EXCLUDED_COMPONENTS = \"excluded_components\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_UPDATES",
+            "parent": "",
+            "signature": "ATTR_UPDATES = \"updates\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_CATEGORIES",
+            "parent": "",
+            "signature": "ATTR_CATEGORIES = \"categories\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_SUMMARY",
+            "parent": "",
+            "signature": "ATTR_SUMMARY = \"summary\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_ENTITY_ID",
+            "parent": "",
+            "signature": "ATTR_ENTITY_ID = \"entity_id\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_ENABLED",
+            "parent": "",
+            "signature": "ATTR_AI_ENABLED = \"ai_enabled\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_PENDING",
+            "parent": "",
+            "signature": "ATTR_AI_PENDING = \"ai_pending\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_IN_PROGRESS",
+            "parent": "",
+            "signature": "ATTR_AI_IN_PROGRESS = \"ai_in_progress\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_LAST_ERROR",
+            "parent": "",
+            "signature": "ATTR_AI_LAST_ERROR = \"ai_last_error\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_LAST_RUN",
+            "parent": "",
+            "signature": "ATTR_AI_LAST_RUN = \"ai_last_run\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_RATE_PER_MINUTE",
+            "parent": "",
+            "signature": "ATTR_AI_RATE_PER_MINUTE = \"ai_rate_per_minute\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_AI_ETA_SECONDS",
+            "parent": "",
+            "signature": "ATTR_AI_ETA_SECONDS = \"ai_eta_seconds\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_INSTALL_DATES_SINCE",
+            "parent": "",
+            "signature": "ATTR_INSTALL_DATES_SINCE = \"install_dates_since\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_EXCLUDE",
+            "parent": "",
+            "signature": "CONF_EXCLUDE = \"exclude\"  # user-maintained list of components to treat as used (#70)"
+          },
+          {
+            "kind": "const",
+            "name": "CONF_AI_CATEGORIZATION_ENABLED",
+            "parent": "",
+            "signature": "CONF_AI_CATEGORIZATION_ENABLED = \"ai_categorization_enabled\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_AI_TASK_ENTITY",
+            "parent": "",
+            "signature": "CONF_AI_TASK_ENTITY = \"ai_task_entity\""
+          },
+          {
+            "kind": "const",
+            "name": "AI_CACHE_STORAGE_KEY",
+            "parent": "",
+            "signature": "AI_CACHE_STORAGE_KEY = \"custom_component_monitor.ai_categories\""
+          },
+          {
+            "kind": "const",
+            "name": "AI_CACHE_STORAGE_VERSION",
+            "parent": "",
+            "signature": "AI_CACHE_STORAGE_VERSION = 2"
+          },
+          {
+            "kind": "const",
+            "name": "AI_CATEGORY_OPTIONS",
+            "parent": "",
+            "signature": "AI_CATEGORY_OPTIONS = ["
+          },
+          {
+            "kind": "const",
+            "name": "AI_CATEGORY_ALIASES",
+            "parent": "",
+            "signature": "AI_CATEGORY_ALIASES ="
+          },
+          {
+            "kind": "const",
+            "name": "AI_MAX_PER_SCAN",
+            "parent": "",
+            "signature": "AI_MAX_PER_SCAN = 8  # cap new AI calls per scan so refreshes stay snappy"
+          },
+          {
+            "kind": "const",
+            "name": "AI_CALL_TIMEOUT",
+            "parent": "",
+            "signature": "AI_CALL_TIMEOUT = 30  # seconds per AI Task call"
+          },
+          {
+            "kind": "const",
+            "name": "AI_FAILURE_BACKOFF_MINUTES",
+            "parent": "",
+            "signature": "AI_FAILURE_BACKOFF_MINUTES = (15, 60, 360, 1440)"
+          },
+          {
+            "kind": "const",
+            "name": "AI_MAX_ATTEMPTS",
+            "parent": "",
+            "signature": "AI_MAX_ATTEMPTS = 5  # after this, only a forced/manual run retries"
+          },
+          {
+            "kind": "const",
+            "name": "AI_CACHE_MAX_AGE_DAYS",
+            "parent": "",
+            "signature": "AI_CACHE_MAX_AGE_DAYS = 30  # evict records untouched for this long"
+          },
+          {
+            "kind": "const",
+            "name": "AI_CACHE_MAX_ENTRIES",
+            "parent": "",
+            "signature": "AI_CACHE_MAX_ENTRIES = 500  # hard cap, oldest-updated dropped first"
+          },
+          {
+            "kind": "const",
+            "name": "INSTALL_DATES_STORAGE_KEY",
+            "parent": "",
+            "signature": "INSTALL_DATES_STORAGE_KEY = \"custom_component_monitor.install_dates\""
+          },
+          {
+            "kind": "const",
+            "name": "INSTALL_DATES_STORAGE_VERSION",
+            "parent": "",
+            "signature": "INSTALL_DATES_STORAGE_VERSION = 1"
+          },
+          {
+            "kind": "const",
+            "name": "INSTALL_DATES_GRACE_DAYS",
+            "parent": "",
+            "signature": "INSTALL_DATES_GRACE_DAYS = 45"
+          },
+          {
+            "kind": "const",
+            "name": "INSTALL_DATES_MAX_ENTRIES",
+            "parent": "",
+            "signature": "INSTALL_DATES_MAX_ENTRIES = 1000"
+          },
+          {
+            "kind": "const",
+            "name": "INSTALL_DATES_NEW_WINDOW_DAYS",
+            "parent": "",
+            "signature": "INSTALL_DATES_NEW_WINDOW_DAYS = 2"
+          },
+          {
+            "kind": "const",
+            "name": "CATEGORY_MAP",
+            "parent": "",
+            "signature": "CATEGORY_MAP ="
+          },
+          {
+            "kind": "const",
+            "name": "DEFAULT_SCAN_INTERVAL",
+            "parent": "",
+            "signature": "DEFAULT_SCAN_INTERVAL = 3600  # 1 hour"
+          },
+          {
+            "kind": "const",
+            "name": "STORAGE_KEY",
+            "parent": "",
+            "signature": "STORAGE_KEY = \"custom_component_monitor.update_actions\""
+          },
+          {
+            "kind": "const",
+            "name": "STORAGE_VERSION",
+            "parent": "",
+            "signature": "STORAGE_VERSION = 1"
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_UPDATE_AND_ACTION",
+            "parent": "",
+            "signature": "SERVICE_UPDATE_AND_ACTION = \"update_and_action\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_UPDATE_ALL",
+            "parent": "",
+            "signature": "SERVICE_UPDATE_ALL = \"update_all\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_GENERATE_SUMMARIES",
+            "parent": "",
+            "signature": "SERVICE_GENERATE_SUMMARIES = \"generate_summaries\""
+          },
+          {
+            "kind": "const",
+            "name": "UAT_CARD_JS",
+            "parent": "",
+            "signature": "UAT_CARD_JS = \"update-action-tracker-card.js\""
+          },
+          {
+            "kind": "const",
+            "name": "UAT_CARD_BASE_PATH",
+            "parent": "",
+            "signature": "UAT_CARD_BASE_PATH = f\"/local/{DOMAIN}/{UAT_CARD_JS}\""
+          },
+          {
+            "kind": "const",
+            "name": "RIU_CARD_JS",
+            "parent": "",
+            "signature": "RIU_CARD_JS = \"recently-installed-unused-card.js\""
+          },
+          {
+            "kind": "const",
+            "name": "RIU_CARD_BASE_PATH",
+            "parent": "",
+            "signature": "RIU_CARD_BASE_PATH = f\"/local/{DOMAIN}/{RIU_CARD_JS}\""
+          },
+          {
+            "kind": "const",
+            "name": "SENSOR_NEW_ITEMS",
+            "parent": "",
+            "signature": "SENSOR_NEW_ITEMS = \"new_items\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_CARD_JS",
+            "parent": "",
+            "signature": "NEW_ITEMS_CARD_JS = \"hacs-new-items-card.js\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_CARD_BASE_PATH",
+            "parent": "",
+            "signature": "NEW_ITEMS_CARD_BASE_PATH = f\"/local/{DOMAIN}/{NEW_ITEMS_CARD_JS}\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_ITEMS",
+            "parent": "",
+            "signature": "ATTR_ITEMS = \"items\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_BY_CATEGORY",
+            "parent": "",
+            "signature": "ATTR_BY_CATEGORY = \"by_category\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_HIDDEN",
+            "parent": "",
+            "signature": "ATTR_HIDDEN = \"hidden\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_HIDDEN_COUNT",
+            "parent": "",
+            "signature": "ATTR_HIDDEN_COUNT = \"hidden_count\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_DISMISSED_COUNT",
+            "parent": "",
+            "signature": "ATTR_DISMISSED_COUNT = \"dismissed_count\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_TOTAL_NEW",
+            "parent": "",
+            "signature": "ATTR_TOTAL_NEW = \"total_new\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_HOME_COUNTRY",
+            "parent": "",
+            "signature": "ATTR_HOME_COUNTRY = \"home_country\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_ITEMS_TRUNCATED",
+            "parent": "",
+            "signature": "ATTR_ITEMS_TRUNCATED = \"items_truncated\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_HIDDEN_TRUNCATED",
+            "parent": "",
+            "signature": "ATTR_HIDDEN_TRUNCATED = \"hidden_truncated\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_NEW_ITEMS_ENABLED",
+            "parent": "",
+            "signature": "CONF_NEW_ITEMS_ENABLED = \"new_items_enabled\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_AUTO_HIDE_FOREIGN",
+            "parent": "",
+            "signature": "CONF_AUTO_HIDE_FOREIGN = \"auto_hide_foreign\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_HOME_COUNTRY",
+            "parent": "",
+            "signature": "CONF_HOME_COUNTRY = \"home_country\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_EXTRA_HOME_TERMS",
+            "parent": "",
+            "signature": "CONF_EXTRA_HOME_TERMS = \"extra_home_terms\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_NEW_ITEMS_MAX_AI_PER_CYCLE",
+            "parent": "",
+            "signature": "CONF_NEW_ITEMS_MAX_AI_PER_CYCLE = \"new_items_max_ai_per_cycle\""
+          },
+          {
+            "kind": "const",
+            "name": "CONF_NEW_ITEMS_AI_BUDGET_SECONDS",
+            "parent": "",
+            "signature": "CONF_NEW_ITEMS_AI_BUDGET_SECONDS = \"new_items_ai_budget_seconds\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_STORAGE_KEY",
+            "parent": "",
+            "signature": "NEW_ITEMS_STORAGE_KEY = \"custom_component_monitor.new_items\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_STORAGE_VERSION",
+            "parent": "",
+            "signature": "NEW_ITEMS_STORAGE_VERSION = 1"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_WINDOW_DAYS",
+            "parent": "",
+            "signature": "NEW_ITEMS_WINDOW_DAYS = 30"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_GRACE_DAYS",
+            "parent": "",
+            "signature": "NEW_ITEMS_GRACE_DAYS = 45"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_MAX_ENTRIES",
+            "parent": "",
+            "signature": "NEW_ITEMS_MAX_ENTRIES = 2000"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE",
+            "parent": "",
+            "signature": "NEW_ITEMS_DEFAULT_MAX_AI_PER_CYCLE = 10"
+          },
+          {
+            "kind": "const",
+            "name": "DEFAULT_HOME_COUNTRY",
+            "parent": "",
+            "signature": "DEFAULT_HOME_COUNTRY = \"AU\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_DEFAULT_BUDGET_SECONDS = 20"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_MIN_BUDGET_SECONDS",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_MIN_BUDGET_SECONDS = 5"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_MAX_BUDGET_SECONDS",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_MAX_BUDGET_SECONDS = 300"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_CATCHUP_SECONDS",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_CATCHUP_SECONDS = 5"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_CONCURRENCY_START",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_CONCURRENCY_START = 2"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_CONCURRENCY_MAX",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_CONCURRENCY_MAX = 8"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_GROW_GAIN",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_GROW_GAIN = 1.05"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_REPROBE_WAVES",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_REPROBE_WAVES = 5"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_MAX_FAILED_WAVES",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_MAX_FAILED_WAVES = 3"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_AI_MAX_PASSES",
+            "parent": "",
+            "signature": "NEW_ITEMS_AI_MAX_PASSES = 500"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_MAX_EXPOSED",
+            "parent": "",
+            "signature": "NEW_ITEMS_MAX_EXPOSED = 300"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEMS_MAX_EXPOSED_HIDDEN",
+            "parent": "",
+            "signature": "NEW_ITEMS_MAX_EXPOSED_HIDDEN = 100"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEM_CATEGORY_OPTIONS",
+            "parent": "",
+            "signature": "NEW_ITEM_CATEGORY_OPTIONS = ["
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEM_CATEGORY_FALLBACK",
+            "parent": "",
+            "signature": "NEW_ITEM_CATEGORY_FALLBACK = \"Other\""
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEM_CATEGORY_ALIASES",
+            "parent": "",
+            "signature": "NEW_ITEM_CATEGORY_ALIASES ="
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEM_AI_PROMPT_VERSION",
+            "parent": "",
+            "signature": "NEW_ITEM_AI_PROMPT_VERSION = 1"
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_DISMISS_NEW_ITEMS",
+            "parent": "",
+            "signature": "SERVICE_DISMISS_NEW_ITEMS = \"dismiss_new_items\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_RESTORE_NEW_ITEMS",
+            "parent": "",
+            "signature": "SERVICE_RESTORE_NEW_ITEMS = \"restore_new_items\""
+          },
+          {
+            "kind": "const",
+            "name": "SERVICE_CATEGORISE_NEW_ITEMS",
+            "parent": "",
+            "signature": "SERVICE_CATEGORISE_NEW_ITEMS = \"categorise_new_items\""
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/countries.py",
+        "symbols": [
+          {
+            "kind": "class",
+            "name": "CountryMatch",
+            "parent": "",
+            "signature": "class CountryMatch"
+          },
+          {
+            "kind": "class",
+            "name": "CountryVerdict",
+            "parent": "",
+            "signature": "class CountryVerdict"
+          },
+          {
+            "kind": "function",
+            "name": "reason",
+            "parent": "CountryVerdict",
+            "signature": "reason(self) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "scope_is_foreign",
+            "parent": "",
+            "signature": "scope_is_foreign(scope: str | None, home_country: str = \"AU\") -> bool"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/install_dates.py",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "install_key",
+            "parent": "",
+            "signature": "install_key(repo: dict[str, Any]) -> str"
+          },
+          {
+            "kind": "class",
+            "name": "InstallDateStore",
+            "parent": "",
+            "signature": "class InstallDateStore(Store)"
+          },
+          {
+            "kind": "class",
+            "name": "InstallDateRegistry",
+            "parent": "",
+            "signature": "class InstallDateRegistry"
+          },
+          {
+            "kind": "function",
+            "name": "async_load",
+            "parent": "InstallDateRegistry",
+            "signature": "async_load(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "seeded_at",
+            "parent": "InstallDateRegistry",
+            "signature": "seeded_at(self) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "begin_scan",
+            "parent": "InstallDateRegistry",
+            "signature": "begin_scan(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "end_scan",
+            "parent": "InstallDateRegistry",
+            "signature": "end_scan(self) -> None"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/new_items.py",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "item_key",
+            "parent": "",
+            "signature": "item_key(full_name: str) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "prettify_repo_name",
+            "parent": "",
+            "signature": "prettify_repo_name(full_name: str) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "display_name_for",
+            "parent": "",
+            "signature": "display_name_for(full_name: str, repo: dict[str, Any] | None = None) -> str"
+          },
+          {
+            "kind": "class",
+            "name": "NewItemStore",
+            "parent": "",
+            "signature": "class NewItemStore(Store)"
+          },
+          {
+            "kind": "class",
+            "name": "NewItemRegistry",
+            "parent": "",
+            "signature": "class NewItemRegistry"
+          },
+          {
+            "kind": "function",
+            "name": "async_load",
+            "parent": "NewItemRegistry",
+            "signature": "async_load(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "async_save",
+            "parent": "NewItemRegistry",
+            "signature": "async_save(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "note_seen",
+            "parent": "NewItemRegistry",
+            "signature": "note_seen(self, full_name: str, now: datetime | None = None) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "first_seen",
+            "parent": "NewItemRegistry",
+            "signature": "first_seen(self, full_name: str) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "age_days",
+            "parent": "NewItemRegistry",
+            "signature": "age_days(self, full_name: str, now: datetime | None = None) -> int"
+          },
+          {
+            "kind": "function",
+            "name": "is_dismissed",
+            "parent": "NewItemRegistry",
+            "signature": "is_dismissed(self, full_name: str) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "dismiss",
+            "parent": "NewItemRegistry",
+            "signature": "dismiss(self, full_name: str, now: datetime | None = None) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "restore",
+            "parent": "NewItemRegistry",
+            "signature": "restore(self, full_name: str) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "dismissed_count",
+            "parent": "NewItemRegistry",
+            "signature": "dismissed_count(self) -> int"
+          },
+          {
+            "kind": "function",
+            "name": "dismissed_keys",
+            "parent": "NewItemRegistry",
+            "signature": "dismissed_keys(self) -> frozenset[str]"
+          },
+          {
+            "kind": "function",
+            "name": "is_never_hide",
+            "parent": "NewItemRegistry",
+            "signature": "is_never_hide(self, full_name: str) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "clear_hidden",
+            "parent": "NewItemRegistry",
+            "signature": "clear_hidden(self, full_name: str) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "hidden_record",
+            "parent": "NewItemRegistry",
+            "signature": "hidden_record(self, full_name: str) -> dict[str, Any] | None"
+          },
+          {
+            "kind": "function",
+            "name": "get_ai",
+            "parent": "NewItemRegistry",
+            "signature": "get_ai(self, full_name: str) -> dict[str, Any] | None"
+          },
+          {
+            "kind": "function",
+            "name": "clear_ai",
+            "parent": "NewItemRegistry",
+            "signature": "clear_ai(self, full_name: str) -> bool"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/sensor.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "SCAN_INTERVAL",
+            "parent": "",
+            "signature": "SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)"
+          },
+          {
+            "kind": "function",
+            "name": "norm_name",
+            "parent": "",
+            "signature": "norm_name(value: Any) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "norm_version",
+            "parent": "",
+            "signature": "norm_version(value: Any) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "repo_key",
+            "parent": "",
+            "signature": "repo_key(url: Any) -> str"
+          },
+          {
+            "kind": "class",
+            "name": "AiCacheStore",
+            "parent": "",
+            "signature": "class AiCacheStore(Store)"
+          },
+          {
+            "kind": "class",
+            "name": "InstallInfo",
+            "parent": "",
+            "signature": "class InstallInfo(NamedTuple)"
+          },
+          {
+            "kind": "class",
+            "name": "ComponentScanner",
+            "parent": "",
+            "signature": "class ComponentScanner"
+          },
+          {
+            "kind": "function",
+            "name": "scan_themes",
+            "parent": "ComponentScanner",
+            "signature": "scan_themes(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "function",
+            "name": "scan_frontend",
+            "parent": "ComponentScanner",
+            "signature": "scan_frontend(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "function",
+            "name": "scan_integrations",
+            "parent": "ComponentScanner",
+            "signature": "scan_integrations(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "function",
+            "name": "scan_all_hacs_components",
+            "parent": "ComponentScanner",
+            "signature": "scan_all_hacs_components(self) -> list[dict[str, Any]]"
+          },
+          {
+            "kind": "function",
+            "name": "scan_updates",
+            "parent": "ComponentScanner",
+            "signature": "scan_updates(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "class",
+            "name": "CustomComponentMonitorCoordinator",
+            "parent": "",
+            "signature": "class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]])"
+          },
+          {
+            "kind": "function",
+            "name": "ai_enabled",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "ai_enabled(self) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "ai_last_error",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "ai_last_error(self) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "async_cancel_ai_run",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "async_cancel_ai_run(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "known_update_entity_ids",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "known_update_entity_ids(self) -> set[str]"
+          },
+          {
+            "kind": "function",
+            "name": "new_items_ai_last_error",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "new_items_ai_last_error(self) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "new_items_ai_rate_per_minute",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "new_items_ai_rate_per_minute(self) -> float | None"
+          },
+          {
+            "kind": "function",
+            "name": "new_items_ai_eta_seconds",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "new_items_ai_eta_seconds(self, pending: int) -> int | None"
+          },
+          {
+            "kind": "function",
+            "name": "async_reset_new_items_ai_cache",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "async_reset_new_items_ai_cache(self) -> int"
+          },
+          {
+            "kind": "function",
+            "name": "async_schedule_new_items_ai_run",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "async_schedule_new_items_ai_run(self) -> None"
+          },
+          {
+            "kind": "class",
+            "name": "CustomComponentMonitorSensor",
+            "parent": "",
+            "signature": "class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity)"
+          },
+          {
+            "kind": "function",
+            "name": "native_value",
+            "parent": "CustomComponentMonitorSensor",
+            "signature": "native_value(self) -> int"
+          },
+          {
+            "kind": "function",
+            "name": "extra_state_attributes",
+            "parent": "CustomComponentMonitorSensor",
+            "signature": "extra_state_attributes(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "class",
+            "name": "HacsNewItemsSensor",
+            "parent": "",
+            "signature": "class HacsNewItemsSensor(CoordinatorEntity, SensorEntity)"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/todo.py",
+        "symbols": [
+          {
+            "kind": "class",
+            "name": "UpdateActionTodoList",
+            "parent": "",
+            "signature": "class UpdateActionTodoList(TodoListEntity)"
+          },
+          {
+            "kind": "function",
+            "name": "todo_items",
+            "parent": "UpdateActionTodoList",
+            "signature": "todo_items(self) -> list[TodoItem]"
+          },
+          {
+            "kind": "function",
+            "name": "async_create_todo_item",
+            "parent": "UpdateActionTodoList",
+            "signature": "async_create_todo_item(self, item: TodoItem) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "async_update_todo_item",
+            "parent": "UpdateActionTodoList",
+            "signature": "async_update_todo_item(self, item: TodoItem) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "async_delete_todo_items",
+            "parent": "UpdateActionTodoList",
+            "signature": "async_delete_todo_items(self, uids: list[str]) -> None"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/www/custom-component-monitor-card.js",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "_ccm_escapeHtml",
+            "parent": "",
+            "signature": "function _ccm_escapeHtml(text)"
+          },
+          {
+            "kind": "class",
+            "name": "CustomComponentMonitorCard",
+            "parent": "",
+            "signature": "class CustomComponentMonitorCard extends HTMLElement"
+          },
+          {
+            "kind": "function",
+            "name": "_ccmLoadHaComponents",
+            "parent": "",
+            "signature": "function _ccmLoadHaComponents()"
+          },
+          {
+            "kind": "function",
+            "name": "_ccmSameValue",
+            "parent": "",
+            "signature": "function _ccmSameValue(a, b)"
+          },
+          {
+            "kind": "function",
+            "name": "_ccmPrune",
+            "parent": "",
+            "signature": "function _ccmPrune(config)"
+          },
+          {
+            "kind": "class",
+            "name": "CustomComponentMonitorCardEditor",
+            "parent": "",
+            "signature": "class CustomComponentMonitorCardEditor extends HTMLElement"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/www/hacs-new-items-card.js",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "hniEscapeHtml",
+            "parent": "",
+            "signature": "function hniEscapeHtml(text)"
+          },
+          {
+            "kind": "function",
+            "name": "hniAttr",
+            "parent": "",
+            "signature": "function hniAttr(escapedText)"
+          },
+          {
+            "kind": "function",
+            "name": "hniFormatNumber",
+            "parent": "",
+            "signature": "function hniFormatNumber(n)"
+          },
+          {
+            "kind": "function",
+            "name": "hniFormatAge",
+            "parent": "",
+            "signature": "function hniFormatAge(days)"
+          },
+          {
+            "kind": "function",
+            "name": "hniItemKey",
+            "parent": "",
+            "signature": "function hniItemKey(item)"
+          },
+          {
+            "kind": "function",
+            "name": "hniGroupByCategory",
+            "parent": "",
+            "signature": "function hniGroupByCategory(items)"
+          },
+          {
+            "kind": "function",
+            "name": "hniOrderedCategories",
+            "parent": "",
+            "signature": "function hniOrderedCategories(categories)"
+          },
+          {
+            "kind": "const",
+            "name": "isOther",
+            "parent": "",
+            "signature": "const isOther = (c)"
+          },
+          {
+            "kind": "function",
+            "name": "hniSortItems",
+            "parent": "",
+            "signature": "function hniSortItems(items, mode)"
+          },
+          {
+            "kind": "function",
+            "name": "_hniLoadHaComponents",
+            "parent": "",
+            "signature": "function _hniLoadHaComponents()"
+          },
+          {
+            "kind": "function",
+            "name": "_hniPrune",
+            "parent": "",
+            "signature": "function _hniPrune(config)"
+          },
+          {
+            "kind": "class",
+            "name": "HacsNewItemsCardEditor",
+            "parent": "",
+            "signature": "class HacsNewItemsCardEditor extends HTMLElement"
+          },
+          {
+            "kind": "class",
+            "name": "HacsNewItemsCard",
+            "parent": "",
+            "signature": "class HacsNewItemsCard extends HTMLElement"
+          },
+          {
+            "kind": "const",
+            "name": "countClause",
+            "parent": "",
+            "signature": "const countClause = (total, shown, truncated, noun)"
+          },
+          {
+            "kind": "const",
+            "name": "chip",
+            "parent": "",
+            "signature": "const chip = (key, label, n)"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/www/recently-installed-unused-card.js",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "_riu_migrateConfig",
+            "parent": "",
+            "signature": "function _riu_migrateConfig(config)"
+          },
+          {
+            "kind": "function",
+            "name": "_riu_escapeHtml",
+            "parent": "",
+            "signature": "function _riu_escapeHtml(text)"
+          },
+          {
+            "kind": "class",
+            "name": "RecentlyInstalledUnusedCard",
+            "parent": "",
+            "signature": "class RecentlyInstalledUnusedCard extends HTMLElement"
+          },
+          {
+            "kind": "function",
+            "name": "_riuLoadHaComponents",
+            "parent": "",
+            "signature": "function _riuLoadHaComponents()"
+          },
+          {
+            "kind": "function",
+            "name": "_riuSameValue",
+            "parent": "",
+            "signature": "function _riuSameValue(a, b)"
+          },
+          {
+            "kind": "function",
+            "name": "_riuPrune",
+            "parent": "",
+            "signature": "function _riuPrune(config)"
+          },
+          {
+            "kind": "class",
+            "name": "RecentlyInstalledUnusedCardEditor",
+            "parent": "",
+            "signature": "class RecentlyInstalledUnusedCardEditor extends HTMLElement"
+          }
+        ]
+      },
+      {
+        "path": "custom_components/custom_component_monitor/www/update-action-tracker-card.js",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "uatEscapeHtml",
+            "parent": "",
+            "signature": "function uatEscapeHtml(text)"
+          },
+          {
+            "kind": "function",
+            "name": "uatAttr",
+            "parent": "",
+            "signature": "function uatAttr(escapedText)"
+          },
+          {
+            "kind": "function",
+            "name": "_uatEditorSchema",
+            "parent": "",
+            "signature": "function _uatEditorSchema(aiEnabled)"
+          },
+          {
+            "kind": "function",
+            "name": "_uatLoadHaComponents",
+            "parent": "",
+            "signature": "function _uatLoadHaComponents()"
+          },
+          {
+            "kind": "function",
+            "name": "_uatPrune",
+            "parent": "",
+            "signature": "function _uatPrune(config)"
+          },
+          {
+            "kind": "class",
+            "name": "UpdateActionTrackerCardEditor",
+            "parent": "",
+            "signature": "class UpdateActionTrackerCardEditor extends HTMLElement"
+          },
+          {
+            "kind": "class",
+            "name": "UpdateActionTrackerCard",
+            "parent": "",
+            "signature": "class UpdateActionTrackerCard extends HTMLElement"
+          },
+          {
+            "kind": "const",
+            "name": "chip",
+            "parent": "",
+            "signature": "const chip = (key, lbl, n)"
+          },
+          {
+            "kind": "const",
+            "name": "catChip",
+            "parent": "",
+            "signature": "const catChip = (key, lbl, n)"
+          },
+          {
+            "kind": "const",
+            "name": "alertClass",
+            "parent": "",
+            "signature": "const alertClass = (t) =>"
+          }
+        ]
+      }
+    ]
+  },
+  "tests": [
+    "tests/__init__.py",
+    "tests/conftest.py",
+    "tests/test_ai_cache.py",
+    "tests/test_card_staging.py",
+    "tests/test_categorise_one.py",
+    "tests/test_countries.py",
+    "tests/test_generate_summaries.py",
+    "tests/test_install_dates.py",
+    "tests/test_new_items_ai_pacing.py",
+    "tests/test_new_items_display_name.py",
+    "tests/test_new_items_registry.py",
+    "tests/test_new_items_scanner.py",
+    "tests/test_new_items_sensor.py",
+    "tests/test_new_items_services.py",
+    "tests/test_scan_install_dates.py",
+    "tests/test_scan_updates_reconcile.py",
+    "tests/test_setup_and_service.py"
+  ],
+  "operations": [
+    ".github/workflows/release.yaml",
+    ".github/workflows/validate.yaml"
+  ],
+  "limitations": {
+    "unparsed_languages": [],
+    "excluded_dirs": [],
+    "code_map_truncated": false,
+    "code_map_symbols_capped": true,
+    "tracked_files_only": true
+  },
+  "generated": {
+    "source_commit": "95f346c7ea7e78e5013dae093432868d8878009e",
+    "content_hash": "3094e1cd75969c9c",
+    "generator": "navgen"
+  }
+}
