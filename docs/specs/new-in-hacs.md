@@ -281,3 +281,24 @@ no inference* — and the audit list is flat and ungrouped, so the stale label i
 anyone. A handful of items hidden by the **AI's** country scope rather than by the word rules
 will be re-judged during the re-sort, so the hidden count may move slightly; anything
 manually restored is permanently exempt and cannot be touched.
+
+## Addendum — shipped in 1.17.1
+
+A22's toggle could fire against its own label. `_expanded` (category → folded?) was only ever
+**added to** — never pruned — so it accumulated every category the card had seen, while the
+chip row worded the button from the categories currently on screen. One press of
+*Dismiss all* on an open group was enough to split the two: the emptied category left a
+`true` behind that the label could not see and the toggle could, so the button read
+`Expand all`, ran a collapse of the stale entry instead, and nothing opened. Self-clearing
+after one press, but the one press was dead — on the control that exists precisely because
+every group now starts folded.
+
+`_renderDynamic` now **rebuilds** `_expanded` from the live categories each pass, carrying
+each existing value across, so the keys the toggle reads are exactly the keys the label was
+written from and the two agree by construction. Per-group fold state still survives an
+ordinary sensor refresh and is still untouched by the kind filter; a category whose every
+item has been dismissed loses its fold state, which is correct — it no longer exists.
+
+| # | Criterion | How it is verified |
+|---|---|---|
+| A23 | `Expand all` / `Collapse all` always does what its own label says, including after a group has been emptied by *Dismiss all* | Behavioural run of the real card source over the five fold-state scenarios |
