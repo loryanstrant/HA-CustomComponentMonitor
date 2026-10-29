@@ -102,11 +102,17 @@ dismiss_new_items:
       description: Dismiss every currently-shown new item in this category.
       selector:
         select:
+          # Must stay identical to NEW_ITEM_CATEGORY_OPTIONS in const.py, and
+          # to the copy under restore_new_items below. Enforced by
+          # tests/test_new_items_services.py.
           options:
             - "Appliances"
+            - "Automation & scheduling"
             - "Climate & heating"
+            - "Covers & blinds"
             - "Dashboard & theming"
             - "Energy & solar"
+            - "Garden & water"
             - "Health & fitness"
             - "Lighting"
             - "Media & audio"
@@ -114,6 +120,8 @@ dismiss_new_items:
             - "Notifications & voice"
             - "Presence & location"
             - "Security & cameras"
+            - "Sensors & devices"
+            - "System & diagnostics"
             - "Tasks & calendar"
             - "Transport & travel"
             - "Vehicles & EV"
@@ -143,14 +151,21 @@ restore_new_items:
           multiple: true
     category:
       name: "Category"
-      description: Restore every hidden or dismissed item in this category.
+      description: >-
+        Restore every hidden or dismissed item in this category. A dismissed
+        item is matched on the category it carried when you dismissed it.
       selector:
         select:
+          # Must stay identical to NEW_ITEM_CATEGORY_OPTIONS in const.py, and
+          # to the copy under dismiss_new_items above.
           options:
             - "Appliances"
+            - "Automation & scheduling"
             - "Climate & heating"
+            - "Covers & blinds"
             - "Dashboard & theming"
             - "Energy & solar"
+            - "Garden & water"
             - "Health & fitness"
             - "Lighting"
             - "Media & audio"
@@ -158,6 +173,8 @@ restore_new_items:
             - "Notifications & voice"
             - "Presence & location"
             - "Security & cameras"
+            - "Sensors & devices"
+            - "System & diagnostics"
             - "Tasks & calendar"
             - "Transport & travel"
             - "Vehicles & EV"

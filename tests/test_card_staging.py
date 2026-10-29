@@ -10,6 +10,8 @@ only half-wired.
 """
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,42 @@ from custom_components.custom_component_monitor.const import (
 )
 
 ALL_CARDS = (CARD_JS, UAT_CARD_JS, RIU_CARD_JS, NEW_ITEMS_CARD_JS)
+
+COMPONENT = Path("custom_components/custom_component_monitor")
+CARD_VERSION_RE = re.compile(
+    r"""^(?:const|var|let)\s+CARD_VERSION\s*=\s*["']([^"']+)["']""", re.MULTILINE
+)
+
+
+def _manifest_version() -> str:
+    return json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))[
+        "version"
+    ]
+
+
+def _card_version(card_js: str) -> str:
+    source = (COMPONENT / "www" / card_js).read_text(encoding="utf-8")
+    match = CARD_VERSION_RE.search(source)
+    assert match, f"{card_js} declares no CARD_VERSION"
+    return match.group(1)
+
+
+@pytest.mark.parametrize("card_js", ALL_CARDS)
+def test_every_card_version_matches_the_manifest(card_js: str) -> None:
+    """A13: all five version numbers move together, every release.
+
+    The cards are served from ``www/`` with a ``?v=`` tag taken from the card's
+    own ``CARD_VERSION``, while HACS decides whether an update exists from
+    ``manifest.json``. A card left behind is therefore invisible twice over:
+    HACS reports the component up to date, and the browser keeps the cached
+    bundle because the query string never changed — so the user installs the
+    release and sees none of the frontend change. A13 called this a release
+    gate for three versions without anything enforcing it; this is the gate.
+
+    It fails on the *untouched* cards too, deliberately. Bumping only the card
+    that changed is the mistake this catches.
+    """
+    assert _card_version(card_js) == _manifest_version(), card_js
 
 
 @pytest.mark.parametrize("card_js", ALL_CARDS)

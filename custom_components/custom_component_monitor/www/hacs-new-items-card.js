@@ -1,11 +1,12 @@
 /**
  * HACS New Items Card
  * Reviews newly-flagged HACS integrations and cards: a type filter, AI
- * category groups (alphabetical, "Other" pinned last), tick-and-dismiss,
+ * category groups (alphabetical, "Other" pinned last, all collapsed by
+ * default with an Expand all / Collapse all toggle), tick-and-dismiss,
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.16.0";
+const CARD_VERSION = "1.17.0";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -450,6 +451,19 @@ class HacsNewItemsCard extends HTMLElement {
       this._renderDynamic();
       return;
     }
+    /* Expand all / Collapse all. Must sit before the [data-filter] branch so
+       a future chip that carries both attributes cannot be read as a filter. */
+    const toggleAllBtn = e.target.closest('[data-action="toggle-all"]');
+    if (toggleAllBtn) {
+      /* Acts on every category this pass knows about, not only the ones the
+         type filter is showing: the user asked for "all", and a group hidden
+         by the filter must not reappear half-open when they clear it. */
+      const cats = Object.keys(this._expanded);
+      const open = !cats.some((cat) => this._expanded[cat]);
+      cats.forEach((cat) => { this._expanded[cat] = open; });
+      this._renderDynamic();
+      return;
+    }
     const filterChip = e.target.closest("[data-filter]");
     if (filterChip) {
       this._typeFilter = filterChip.getAttribute("data-filter");
@@ -621,9 +635,26 @@ class HacsNewItemsCard extends HTMLElement {
     this._els.subtitle.textContent = subtitleParts.join(" · ");
     this._els.subtitle.style.display = subtitleParts.length ? "" : "none";
 
+    /* Groups: alphabetical by category, "Other" pinned last, and every group
+       collapsed the first time it is seen. Folded-by-default replaced the old
+       "first two open" in v1.17.0: the taxonomy went from 4 groups in practice
+       to ~20, so opening two of them meant scrolling past two long lists
+       before reaching the rest of the week's drop. "Expand all" in the chip
+       row is the way back out - see _filtersHtml.
+
+       The defaults are computed from the FULL (unfiltered-by-type) set of
+       categories so the type filter never reshuffles which ones are open, then
+       the type filter only ever hides a group whose count drops to zero. */
+    const allCatMap = hniGroupByCategory(items);
+    const orderedCats = hniOrderedCategories(Object.keys(allCatMap));
+    orderedCats.forEach((cat) => {
+      if (!(cat in this._expanded)) { this._expanded[cat] = false; }
+    });
+
     /* Type filter chips: same idiom as update-action-tracker-card.js's
-       `.filters` / `.chip` / data-filter / chip-count (see report). */
-    this._els.filters.innerHTML = items.length ? this._filtersHtml(items) : "";
+       `.filters` / `.chip` / data-filter / chip-count (see report). The
+       Expand all / Collapse all toggle rides in the same row. */
+    this._els.filters.innerHTML = items.length ? this._filtersHtml(items, orderedCats) : "";
 
     /* Selection bar */
     if (this._selected.size) {
@@ -633,17 +664,6 @@ class HacsNewItemsCard extends HTMLElement {
       this._els.selectionBar.classList.remove("visible");
       this._els.selectionBar.innerHTML = "";
     }
-
-    /* Groups: alphabetical by category, "Other" pinned last, default collapsed
-       except the first two - computed from the FULL (unfiltered-by-type) set
-       of categories so the type filter never reshuffles which ones default
-       open, then the type filter only ever hides a group whose count drops
-       to zero under it. */
-    const allCatMap = hniGroupByCategory(items);
-    const orderedCats = hniOrderedCategories(Object.keys(allCatMap));
-    orderedCats.forEach((cat, idx) => {
-      if (!(cat in this._expanded)) { this._expanded[cat] = idx < 2; }
-    });
 
     const filteredItems = this._typeFilter === "all"
       ? items
@@ -800,7 +820,7 @@ class HacsNewItemsCard extends HTMLElement {
     );
   }
 
-  _filtersHtml(items) {
+  _filtersHtml(items, orderedCats) {
     const counts = { all: items.length, integration: 0, card: 0 };
     for (const it of items) {
       if (it.kind === "integration") counts.integration++;
@@ -809,10 +829,25 @@ class HacsNewItemsCard extends HTMLElement {
     const chip = (key, label, n) =>
       '<button type="button" class="chip' + (this._typeFilter === key ? " active" : "") + '" data-filter="' + key + '">' +
       hniEscapeHtml(label) + ' <span class="chip-count">' + n + "</span></button>";
+    /* Expand all / Collapse all. Every group now starts folded, so without
+       this the only way to see the whole drop is ten to twelve taps. One
+       button whose word flips with the state rather than two: "is any group
+       open" is the only distinction worth acting on, and the word itself says
+       which way the next tap goes - no colour, no icon-only state. It reuses
+       `.chip` so it sits level with the kind filters at the same height and
+       casing, and carries an aria-label because "Expand all" on its own does
+       not say what it expands. */
+    const cats = orderedCats || [];
+    const toggleLabel = cats.some((cat) => this._expanded[cat]) ? "Collapse all" : "Expand all";
+    const toggle = cats.length > 1
+      ? '<button type="button" class="chip chip-toggle" data-action="toggle-all"' +
+        ' aria-label="' + toggleLabel + ' category groups">' + toggleLabel + "</button>"
+      : "";
     return (
       chip("all", "All", counts.all) +
       chip("integration", "Integrations", counts.integration) +
-      chip("card", "Cards", counts.card)
+      chip("card", "Cards", counts.card) +
+      toggle
     );
   }
 
@@ -951,6 +986,10 @@ class HacsNewItemsCard extends HTMLElement {
       ".chip:hover { background:var(--hni-row-hover, rgba(127,127,127,0.16)); }",
       ".chip.active { background:var(--primary-color, #03a9f4); color:#fff; border-color:var(--primary-color, #03a9f4); }",
       ".chip-count { font-size:0.85em; opacity:0.85; }",
+      /* Expand all / Collapse all sits at the far end of the same row: it
+         filters nothing, so butting it up against the three kind chips would
+         read as a fourth filter. It never takes .active - it has no "on". */
+      ".chip-toggle { margin-left:auto; }",
       /* Selection bar */
       ".selection-bar { display:none; align-items:center; justify-content:space-between; gap:10px; background:rgba(var(--rgb-primary-color, 3,169,244), 0.08); border:1px solid rgba(var(--rgb-primary-color, 3,169,244), 0.2); border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:0.85em; font-weight:500; color:var(--hni-primary); }",
       ".selection-bar.visible { display:flex; }",
@@ -1023,9 +1062,12 @@ class HacsNewItemsCard extends HTMLElement {
       ".audit-reason { font-size:0.76em; color:var(--hni-secondary); margin-top:2px; }",
       ".restore-btn { background:none; border:none; color:var(--hni-accent); font-size:0.8em; font-weight:500; cursor:pointer; white-space:nowrap; flex-shrink:0; font-family:inherit; padding:4px 8px; }",
       ".audit-note { padding:8px 0 0; font-size:0.76em; color:var(--hni-secondary); font-style:italic; }",
-      /* ~380px: kind chip + meta wrap under the name, group's Dismiss all goes
-         full-width below the group title, action buttons go full-width. */
+      /* ~380px: kind chip + meta wrap under the name, Expand all drops onto
+         its own row under the three kind chips rather than squeezing them,
+         group's Dismiss all goes full-width below the group title, action
+         buttons go full-width. */
       "@media (max-width: 380px) {",
+      "  .chip-toggle { margin-left:0; flex:1 1 100%; justify-content:center; }",
       "  .item-top { flex-direction:column; align-items:flex-start; gap:3px; }",
       "  .item-name { white-space:normal; }",
       "  .group-header { flex-wrap:wrap; }",

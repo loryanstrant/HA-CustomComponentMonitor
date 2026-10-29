@@ -502,7 +502,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         if item.get("category") == wanted
                     }
                     for key in dismissed_keys:
-                        ai_record = registry.get_ai(key)
+                        # include_stale: a dismissed item is never re-sent to
+                        # the AI, so after a NEW_ITEM_AI_PROMPT_VERSION bump
+                        # the plain call returns None for every one of them and
+                        # they all collapse onto the fallback category. See
+                        # NewItemRegistry.get_ai.
+                        ai_record = registry.get_ai(key, include_stale=True)
                         category = (
                             ai_record["category"]
                             if ai_record

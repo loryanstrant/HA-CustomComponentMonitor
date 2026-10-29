@@ -199,6 +199,44 @@ def test_get_ai_absent_is_none(registry):
     assert registry.get_ai("Nobody/Home") is None
 
 
+def test_include_stale_reads_back_a_record_from_an_older_prompt_version(registry):
+    """The one reader that must see a stale verdict: restore-by-category.
+
+    A dismissed item is never re-sent to the AI — the batch runner's queue is
+    built from the *visible* set — so after a NEW_ITEM_AI_PROMPT_VERSION bump
+    the plain call returns None for every dismissed item, permanently. Without
+    this flag, ``restore_new_items`` with a category would restore nothing for
+    every real category and everything for "Other", because the whole
+    dismissed set collapses onto the fallback. See
+    ``handle_restore_new_items``.
+    """
+    registry.set_ai(
+        "Owner/Repo", category="Energy & solar", country_scope="global", model="old"
+    )
+    registry._ai[item_key("Owner/Repo")]["prompt_version"] = (
+        NEW_ITEM_AI_PROMPT_VERSION - 1
+    )
+
+    assert registry.get_ai("Owner/Repo") is None
+    stale = registry.get_ai("Owner/Repo", include_stale=True)
+    assert stale["category"] == "Energy & solar"
+
+
+def test_include_stale_still_returns_none_for_an_item_with_no_record(registry):
+    """Stale is not a licence to invent one."""
+    assert registry.get_ai("Nobody/Home", include_stale=True) is None
+
+
+def test_include_stale_returns_a_copy_like_the_plain_call_does(registry):
+    """Both paths hand back a copy, so a caller cannot edit the cache."""
+    registry.set_ai("Owner/Repo", category="Lighting", country_scope=None, model=None)
+
+    record = registry.get_ai("Owner/Repo", include_stale=True)
+    record["category"] = "Tampered"
+
+    assert registry.get_ai("Owner/Repo")["category"] == "Lighting"
+
+
 # -- pruning ---------------------------------------------------------------------
 
 

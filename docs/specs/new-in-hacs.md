@@ -98,12 +98,24 @@ flag. The dismiss list is kept indefinitely.
 
 ## Category set
 
-Held and displayed alphabetically, with `Other` pinned last:
+Held alphabetically with `Other` pinned last — 20 categories plus the fallback, since 1.17.0
+(the original 16 are marked; see the *1.17.0* addendum for why the five were added and the
+measurement that prompted it):
 
-Appliances · Climate & heating · Dashboard & theming · Energy & solar · Health & fitness ·
-Lighting · Media & audio · Network & infrastructure · Notifications & voice ·
-Presence & location · Security & cameras · Tasks & calendar · Transport & travel ·
-Vehicles & EV · Weather & environment · **Other**
+Appliances · **Automation & scheduling** · Climate & heating · **Covers & blinds** ·
+Dashboard & theming · Energy & solar · **Garden & water** · Health & fitness · Lighting ·
+Media & audio · Network & infrastructure · Notifications & voice · Presence & location ·
+Security & cameras · **Sensors & devices** · **System & diagnostics** · Tasks & calendar ·
+Transport & travel · Vehicles & EV · Weather & environment · *Other*
+
+Every label carries a one-sentence definition in `NEW_ITEM_CATEGORY_DEFINITIONS`, which is
+what the prompt actually shows the model; a label with no definition is a label the prompt
+cannot explain, and a test asserts the two sets are equal.
+
+The list is duplicated by hand in three more places — the two `category` selectors in
+`services.yaml` and the card's own group ordering — so a label added here must be added
+there too. The `services.yaml` copies are enforced by test; the card's ordering is
+size-independent and needs no change.
 
 This set is **separate** from the existing `AI_CATEGORY_OPTIONS` used for release-note
 categorisation (Bug fixes / New features / …) and must not be conflated with it.
@@ -177,3 +189,95 @@ Acceptance criteria added with them:
 - A sensor update arriving while the confirmation is open updates the count in its label if
   the count changed, closes the dialog if the category emptied, and dismisses only the items
   the label counted at the moment **Dismiss** was pressed.
+
+## Addendum — shipped in 1.17.0
+
+### The measurement
+
+`Other` had become the largest group on the card rather than the leftover pile A7 intends.
+Observed by the owner at **96 of 165**; read off live `sensor.hacs_new_items` on this house's
+production HA on **2026-10-27 20:48 AEDT**:
+
+```
+state 127 · by_category {Dashboard & theming: 33, Other: 58, Energy & solar: 23, Weather & environment: 13}
+ai_enabled true · ai_pending 0 · ai_in_progress false · ai_last_error None
+ai_last_run 2026-10-26T10:19:28Z · ai_rate_per_minute 178.4 · items_truncated 0
+total_new 961 · dismissed_count 705 · hidden_count 129
+```
+
+`ai_pending: 0` alongside 58 settled `Other` items is what rules out the first hypothesis —
+that the 300+ item backlog had simply not been worked through. Every one of those 58 was a
+cached verdict, so the 1.15.1 pacing work was behaving correctly and the fault was in the
+question being asked, not in how many times it was asked.
+
+Reading all 58 by name, kind, description and topics:
+
+| Pile | Count | Why it fell through |
+|---|---|---|
+| Tooling for HA itself (entity audits, recorder/statistics, backups, update pins) | ~24 | No category existed for the house's own plumbing |
+| Lovelace cards with no domain subject (tap confirmations, date pickers, wall panels) | ~15 | Nothing told the model that `kind == "card"` already settles it |
+| Covers, irrigation, schedulers, small device bridges | ~10 | No category existed |
+| Genuinely off-topic | ~5 | Correctly `Other` |
+
+Two aggravating factors: the prompt offered sixteen **bare labels** with no definitions, and
+it said *"use 'Other' only when nothing else fits"* — which a 9B model reads as permission.
+
+### What changed
+
+- **Five new categories** — `System & diagnostics`, `Automation & scheduling`,
+  `Garden & water`, `Covers & blinds`, `Sensors & devices` — with aliases, and the alias
+  `"system"` **re-pointed** from `Network & infrastructure` (where it had been filing entity
+  audits) to `System & diagnostics`.
+- **Every category now has a definition**, and the catalogue of definitions leads the prompt,
+  ahead of the item being judged. Leading with it is deliberate: it is identical for every
+  item in a batch, so the local backend's prefix cache has the longest possible shared prefix
+  to reuse. `Other` is now defined positively — *not about a home or Home Assistant at all* —
+  rather than as a last resort.
+- **A card that comes back `Other` becomes `Dashboard & theming`**, via one pure function
+  applied at the single place that writes the AI cache, so the cached verdict, the published
+  sensor attribute and the restore path cannot disagree. It only ever promotes the fallback;
+  a card the model placed somewhere specific is left alone.
+- **The whole store re-sorts itself on upgrade**, by bumping `NEW_ITEM_AI_PROMPT_VERSION`,
+  which invalidates every cached verdict. Two to four minutes of background work after the
+  restart at the measured throughput; the card stays usable and shows the progress.
+- **The card opens with every group folded**, with an `Expand all` / `Collapse all` control in
+  the existing chip row. Folding replaced "first two open": at ~20 groups, two open groups
+  meant scrolling past two long lists to reach the rest of the week's drop.
+
+Unchanged by explicit decision: **every item still costs one AI call** — the rules-first
+hybrid rejected in the 2026-10-20 table above stays rejected — and group order stays
+alphabetical with `Other` last.
+
+### One bug fixed with it
+
+Restore-by-category is the only consumer of the AI cache for items the card no longer shows,
+and the re-sort above would have blinded it: a dismissed item is never re-queued (the queue
+is built from the visible set), so once its stored `prompt_version` went stale, `get_ai`
+would have returned `None` for all 705 dismissed items **permanently**. Restoring
+`Energy & solar` would have restored nothing, and restoring `Other` would have un-dismissed
+the entire backlog in one tap. `get_ai` gained an `include_stale` escape hatch, which only
+the restore path passes. Semantically, restore-by-category matches the category an item
+carried **when it was dismissed** — which is also the category that was on screen at the
+time. Dismissals, never-hide overrides and hide records live in separate stores that never
+consult `prompt_version`, so the bump cannot lose any of them.
+
+### Acceptance criteria added
+
+| # | Criterion | How it is verified |
+|---|---|---|
+| A17 | Every category has a definition, every alias resolves to a real category, and `"system"` resolves to `System & diagnostics` | `tests/test_new_item_taxonomy.py` |
+| A18 | The prompt leads with the category catalogue and defines `Other` as off-topic rather than as a last resort | Prompt-text assertion in the same file |
+| A19 | A `card` whose verdict is `Other` is stored **and** published as `Dashboard & theming`, including when the same pass hides it on country scope | `_apply_new_item_ai_result` tests |
+| A20 | Restore-by-category still matches dismissed items after a `NEW_ITEM_AI_PROMPT_VERSION` bump, and restoring `Other` does not sweep up stale dismissals | `tests/test_new_items_services.py` |
+| A21 | A13's lockstep is enforced, not merely documented: `manifest.json` and all four `CARD_VERSION`s must agree | `tests/test_card_staging.py` |
+| A22 | The card opens with every group folded and `Expand all` / `Collapse all` acts on every group this pass knows about, not only the ones the kind filter shows | Card code + screenshots at desktop and ~380 px |
+
+### Deliberately not fixed
+
+The country-hidden items (129 at the measurement) sit at `ai_pending: true` indefinitely,
+because the AI queue is built from the visible list only and `ai_pending` counts visible
+items only. That is this spec's own decision — *country rules pre-filter so hidden items cost
+no inference* — and the audit list is flat and ungrouped, so the stale label is never shown to
+anyone. A handful of items hidden by the **AI's** country scope rather than by the word rules
+will be re-judged during the re-sort, so the hidden count may move slightly; anything
+manually restored is permanently exempt and cannot be touched.
