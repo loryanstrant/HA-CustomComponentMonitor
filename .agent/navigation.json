@@ -5,12 +5,12 @@
     "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
     "default_branch": "main",
     "languages": {
-      "Python": 25,
+      "Python": 26,
       "JavaScript": 4
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 64
+    "file_count": 65
   },
   "start_here": {
     "readme": "README.md",
@@ -71,7 +71,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 347,
+      "lines": 510,
       "headings": [
         {
           "level": 2,
@@ -127,13 +127,33 @@
           "level": 2,
           "text": "2026-10-22 — Only Dismiss all is confirmed, and the confirmation is in-card",
           "anchor": "2026-10-22--only-dismiss-all-is-confirmed-and-the-confirmation-is-in-card"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-29 — \"Other\" was the taxonomy's fault, not the queue's",
+          "anchor": "2026-10-29--other-was-the-taxonomys-fault-not-the-queues"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-29 — kind is evidence, and the card already knew it was a card",
+          "anchor": "2026-10-29--kind-is-evidence-and-the-card-already-knew-it-was-a-card"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-29 — A cache version bump is a change to every reader of that cache",
+          "anchor": "2026-10-29--a-cache-version-bump-is-a-change-to-every-reader-of-that-cache"
+        },
+        {
+          "level": 2,
+          "text": "2026-10-29 — A render-time map that two readers disagree about",
+          "anchor": "2026-10-29--a-render-time-map-that-two-readers-disagree-about"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 706,
+      "lines": 716,
       "headings": [
         {
           "level": 2,
@@ -357,7 +377,7 @@
     {
       "path": "docs/specs/new-in-hacs.md",
       "title": "Spec — New in HACS: review, auto-filter and bulk-dismiss",
-      "lines": 179,
+      "lines": 304,
       "headings": [
         {
           "level": 2,
@@ -423,6 +443,41 @@
           "level": 2,
           "text": "Addendum — shipped in 1.16.0",
           "anchor": "addendum--shipped-in-1160"
+        },
+        {
+          "level": 2,
+          "text": "Addendum — shipped in 1.17.0",
+          "anchor": "addendum--shipped-in-1170"
+        },
+        {
+          "level": 3,
+          "text": "The measurement",
+          "anchor": "the-measurement"
+        },
+        {
+          "level": 3,
+          "text": "What changed",
+          "anchor": "what-changed"
+        },
+        {
+          "level": 3,
+          "text": "One bug fixed with it",
+          "anchor": "one-bug-fixed-with-it"
+        },
+        {
+          "level": 3,
+          "text": "Acceptance criteria added",
+          "anchor": "acceptance-criteria-added"
+        },
+        {
+          "level": 3,
+          "text": "Deliberately not fixed",
+          "anchor": "deliberately-not-fixed"
+        },
+        {
+          "level": 2,
+          "text": "Addendum — shipped in 1.17.1",
+          "anchor": "addendum--shipped-in-1171"
         }
       ]
     },
@@ -1177,6 +1232,12 @@
           },
           {
             "kind": "const",
+            "name": "NEW_ITEM_CATEGORY_DEFINITIONS",
+            "parent": "",
+            "signature": "NEW_ITEM_CATEGORY_DEFINITIONS ="
+          },
+          {
+            "kind": "const",
             "name": "NEW_ITEM_CATEGORY_ALIASES",
             "parent": "",
             "signature": "NEW_ITEM_CATEGORY_ALIASES ="
@@ -1185,7 +1246,7 @@
             "kind": "const",
             "name": "NEW_ITEM_AI_PROMPT_VERSION",
             "parent": "",
-            "signature": "NEW_ITEM_AI_PROMPT_VERSION = 1"
+            "signature": "NEW_ITEM_AI_PROMPT_VERSION = 2"
           },
           {
             "kind": "const",
@@ -1396,12 +1457,6 @@
           },
           {
             "kind": "function",
-            "name": "get_ai",
-            "parent": "NewItemRegistry",
-            "signature": "get_ai(self, full_name: str) -> dict[str, Any] | None"
-          },
-          {
-            "kind": "function",
             "name": "clear_ai",
             "parent": "NewItemRegistry",
             "signature": "clear_ai(self, full_name: str) -> bool"
@@ -1416,6 +1471,12 @@
             "name": "SCAN_INTERVAL",
             "parent": "",
             "signature": "SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)"
+          },
+          {
+            "kind": "const",
+            "name": "NEW_ITEM_CATEGORY_CATALOGUE",
+            "parent": "",
+            "signature": "NEW_ITEM_CATEGORY_CATALOGUE = \"\\n\".join("
           },
           {
             "kind": "function",
@@ -1482,6 +1543,12 @@
             "name": "scan_updates",
             "parent": "ComponentScanner",
             "signature": "scan_updates(self) -> dict[str, Any]"
+          },
+          {
+            "kind": "function",
+            "name": "card_category_override",
+            "parent": "",
+            "signature": "card_category_override(kind: Any, category: str) -> str"
           },
           {
             "kind": "class",
@@ -1869,6 +1936,7 @@
     "tests/test_countries.py",
     "tests/test_generate_summaries.py",
     "tests/test_install_dates.py",
+    "tests/test_new_item_taxonomy.py",
     "tests/test_new_items_ai_pacing.py",
     "tests/test_new_items_display_name.py",
     "tests/test_new_items_registry.py",
@@ -1891,8 +1959,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "fec7650f0f89154803b06b3532e9aeb62dc0a9eb",
-    "content_hash": "5d0ebab7f64a27c3",
+    "source_commit": "44978ca22df1a105b3cb31b8eb39961620425d01",
+    "content_hash": "fa02580b3f202f43",
     "generator": "navgen"
   }
 }
