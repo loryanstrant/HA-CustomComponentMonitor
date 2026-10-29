@@ -476,3 +476,35 @@ Before bumping a version stamp, enumerate who reads the stamped records and ask
 what each of them does with `None` — the answer here was "nothing" in one place
 and "un-dismiss 705 items" in another, and both were two lines away from a
 constant that looked like it only affected the model.
+
+## 2026-10-29 — A render-time map that two readers disagree about
+
+Found by the post-release review of 1.17.0, fixed in **1.17.1**.
+
+`_expanded` in `hacs-new-items-card.js` maps category → folded?, and it was only ever added
+to: `_renderDynamic` filled in a default for any category it had not seen, and nothing ever
+removed one. That was harmless while the only reader was the group being drawn — a key for a
+category with no rows renders nothing. 1.17.0 added a **second** reader with a different
+idea of the key set: `Expand all` / `Collapse all` decides its direction from
+`Object.keys(this._expanded)`, every category ever seen, while the chip row words the
+button's label from the categories currently on screen.
+
+*Dismiss all* on an open group is enough to split them. The emptied category drops off the
+screen still holding `true`; the label, reading the live set, says `Expand all`; the toggle,
+reading all keys, sees one open and runs a collapse. The press clears the stale key and
+opens nothing. One dead click on the control that only exists because every group now starts
+folded — small, but it is the button lying about itself.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| How the two readers are kept in step | **Rebuild `_expanded` from the live categories each render**, carrying existing values across | Passing the ordered list into the click handler; pruning only inside the toggle; reading the DOM for the current groups |
+| Fold state of a category whose items were all dismissed | Dropped — it no longer exists | Remembered in case it returns |
+
+Rebuilding is the fix rather than a second pruning step because it removes the *possibility*
+of a difference instead of patching one site: there is no longer a key set to get out of
+sync with, so a third reader added later inherits the agreement for free.
+
+**Lesson:** a map that accumulates keys is fine with one reader and a trap with two. The
+moment a second reader derives something from its key set — a count, a direction, a label —
+the two readers have to be given the same keys, and the cheapest way to guarantee that is to
+make the map hold only what is live rather than to teach each reader which keys to ignore.

@@ -6,7 +6,7 @@
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.17.0";
+const CARD_VERSION = "1.17.1";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -457,7 +457,10 @@ class HacsNewItemsCard extends HTMLElement {
     if (toggleAllBtn) {
       /* Acts on every category this pass knows about, not only the ones the
          type filter is showing: the user asked for "all", and a group hidden
-         by the filter must not reappear half-open when they clear it. */
+         by the filter must not reappear half-open when they clear it.
+         _renderDynamic rebuilds _expanded from the live categories each pass,
+         so these keys are exactly the ones _filtersHtml worded the button
+         from - the label and the action cannot disagree. */
       const cats = Object.keys(this._expanded);
       const open = !cats.some((cat) => this._expanded[cat]);
       cats.forEach((cat) => { this._expanded[cat] = open; });
@@ -644,12 +647,23 @@ class HacsNewItemsCard extends HTMLElement {
 
        The defaults are computed from the FULL (unfiltered-by-type) set of
        categories so the type filter never reshuffles which ones are open, then
-       the type filter only ever hides a group whose count drops to zero. */
+       the type filter only ever hides a group whose count drops to zero.
+
+       _expanded is REBUILT here rather than topped up, because it is also
+       what "Expand all" reads to decide which way the next press goes. A
+       category that has gone away - every item in it dismissed - used to be
+       left behind still holding `true`, where the chip row's label could not
+       see it but the toggle could: the label read "Expand all" off the live
+       categories while the toggle saw one open and ran a collapse instead,
+       so the press did nothing visible. Keeping the two over the same set of
+       keys makes them agree by construction. */
     const allCatMap = hniGroupByCategory(items);
     const orderedCats = hniOrderedCategories(Object.keys(allCatMap));
+    const expandedNext = {};
     orderedCats.forEach((cat) => {
-      if (!(cat in this._expanded)) { this._expanded[cat] = false; }
+      expandedNext[cat] = cat in this._expanded ? this._expanded[cat] : false;
     });
+    this._expanded = expandedNext;
 
     /* Type filter chips: same idiom as update-action-tracker-card.js's
        `.filters` / `.chip` / data-filter / chip-count (see report). The
