@@ -273,13 +273,29 @@ NEW_ITEMS_MAX_EXPOSED_HIDDEN = 100
 
 # Categorisation of *store* items. Deliberately a different set from
 # AI_CATEGORY_OPTIONS above, which categorises release notes — do not conflate
-# the two. Held alphabetically because that is the order the card renders in;
-# "Other" is pinned last by NEW_ITEM_CATEGORY_FALLBACK rather than sorted.
+# the two.
+#
+# Held alphabetically for the benefit of whoever reads this file, and for the
+# two copies of the list in services.yaml that have to match it. The *card*
+# does not depend on the order at all: ``hniOrderedCategories`` in
+# hacs-new-items-card.js re-sorts whatever it is given and pins "Other" last
+# itself. (The comment here used to claim the opposite.)
+#
+# v1.17.0 added the last five entries. Measured on this house's production
+# store on 2026-10-27: 58 of 127 visible items had settled on "Other" with
+# nothing left in the queue, and reading all 58 showed why — roughly 24 were
+# tooling for Home Assistant itself, ~15 were dashboard cards with no domain
+# subject, ~10 wanted a bucket that did not exist (covers, irrigation,
+# schedulers, small device bridges), and only ~5 were genuinely uncategorisable.
+# "Other" was the taxonomy being too small, not the AI being wrong.
 NEW_ITEM_CATEGORY_OPTIONS = [
     "Appliances",
+    "Automation & scheduling",
     "Climate & heating",
+    "Covers & blinds",
     "Dashboard & theming",
     "Energy & solar",
+    "Garden & water",
     "Health & fitness",
     "Lighting",
     "Media & audio",
@@ -287,6 +303,8 @@ NEW_ITEM_CATEGORY_OPTIONS = [
     "Notifications & voice",
     "Presence & location",
     "Security & cameras",
+    "Sensors & devices",
+    "System & diagnostics",
     "Tasks & calendar",
     "Transport & travel",
     "Vehicles & EV",
@@ -294,6 +312,118 @@ NEW_ITEM_CATEGORY_OPTIONS = [
     "Other",
 ]
 NEW_ITEM_CATEGORY_FALLBACK = "Other"
+
+# One line per category, handed to the model with the label (v1.17.0).
+#
+# A bare list of twenty labels asks the model to guess what each one covers,
+# and a 9B model guesses "Other". The definitions are the fix, and they are
+# written for the boundaries that actually went wrong: that a thing which
+# watches Home Assistant is *System & diagnostics* rather than Network, and
+# that "Other" means "not about the home at all" rather than "none of these is
+# a perfect fit".
+#
+# Keys must stay exactly equal to NEW_ITEM_CATEGORY_OPTIONS — enforced by a
+# test, so a new label cannot be added without a definition.
+NEW_ITEM_CATEGORY_DEFINITIONS = {
+    "Appliances": (
+        "Whitegoods and household machines — washers, dryers, dishwashers, "
+        "ovens, coffee machines, robot vacuums, 3D printers."
+    ),
+    "Automation & scheduling": (
+        "Tools for building or running automations themselves — schedulers, "
+        "timers, calendars of rules, state machines, automation editors and "
+        "blueprint helpers."
+    ),
+    "Climate & heating": (
+        "Heating, cooling, ventilation and humidity — thermostats, heat pumps, "
+        "air conditioners, radiator valves, fans, dehumidifiers."
+    ),
+    "Covers & blinds": (
+        "Anything that opens and closes — blinds, roller shutters, awnings, "
+        "curtains, garage doors, gates, windows, skylights."
+    ),
+    "Dashboard & theming": (
+        "The look and feel of the Home Assistant interface — Lovelace cards, "
+        "themes, layouts, sidebars, kiosk and wall-panel modes. Any frontend "
+        "card belongs here unless it is clearly about one other subject on "
+        "this list."
+    ),
+    "Energy & solar": (
+        "Generating, storing, measuring or pricing electricity — solar "
+        "inverters, home batteries, smart meters, tariffs, consumption "
+        "monitoring."
+    ),
+    "Garden & water": (
+        "Outdoors and water — irrigation controllers, sprinklers, soil "
+        "moisture, lawn mowers, pools, spas, aquariums, plant care, water "
+        "tanks and leak detection."
+    ),
+    "Health & fitness": (
+        "Bodies and wellbeing — scales, sleep tracking, activity and "
+        "exercise, blood pressure, medication reminders."
+    ),
+    "Lighting": (
+        "Lights and light control — bulbs, strips, drivers, scenes, "
+        "circadian and adaptive lighting."
+    ),
+    "Media & audio": (
+        "Playing and managing media — speakers, TVs, receivers, streaming "
+        "services, music libraries, remotes."
+    ),
+    "Network & infrastructure": (
+        "The network and the servers on it — routers, switches, access "
+        "points, DNS, VPNs, firewalls, NAS boxes, UPSs, printers, and "
+        "integrations with other self-hosted services."
+    ),
+    "Notifications & voice": (
+        "Getting a message out or talking to the house — push and chat "
+        "notifications, text-to-speech, speech-to-text, voice assistants, "
+        "LLM and conversation agents."
+    ),
+    "Presence & location": (
+        "Who is where — device trackers, geofencing, room-level presence, "
+        "occupancy, family location sharing."
+    ),
+    "Security & cameras": (
+        "Protecting the house — alarm panels, cameras and NVRs, doorbells, "
+        "locks, motion and door sensors used for security."
+    ),
+    "Sensors & devices": (
+        "A bridge or driver for a specific piece of hardware whose job does "
+        "not fit any other category — Bluetooth and BLE gadgets, serial and "
+        "USB dongles, generic sensor platforms, buttons and remotes, "
+        "single-device integrations."
+    ),
+    "System & diagnostics": (
+        "Tools that watch over Home Assistant itself rather than the home — "
+        "entity, device and integration auditing, logs and log parsing, "
+        "database and recorder maintenance, statistics, backups, update and "
+        "health monitoring, performance and debugging aids."
+    ),
+    "Tasks & calendar": (
+        "Lists, plans and dates — to-do lists, chores, shopping, calendars, "
+        "reminders, school and work schedules."
+    ),
+    "Transport & travel": (
+        "Getting around outside the house — public transport departures, "
+        "traffic and commute times, flights, trains, fuel prices, parcel and "
+        "mail tracking."
+    ),
+    "Vehicles & EV": (
+        "Cars and their charging — vehicle integrations, EV chargers and "
+        "wallboxes, charge scheduling, battery and range reporting."
+    ),
+    "Weather & environment": (
+        "Conditions, indoors and out — forecasts, rain and wind, air "
+        "quality, pollen, UV, temperature and humidity reporting, "
+        "earthquakes, fire and flood warnings."
+    ),
+    "Other": (
+        "Not about a home or Home Assistant at all. Use this only when the "
+        "repository is off-topic — not merely when no category is a perfect "
+        "fit."
+    ),
+}
 # A local 9B model returns near-misses rather than the exact option string, so
 # map the forms seen in practice back onto the canonical set (same approach as
 # AI_CATEGORY_ALIASES).
@@ -303,12 +433,40 @@ NEW_ITEM_CATEGORY_ALIASES = {
     "kitchen": "Appliances",
     "laundry": "Appliances",
     "vacuum": "Appliances",
+    "automation": "Automation & scheduling",
+    "automations": "Automation & scheduling",
+    "automation & scheduling": "Automation & scheduling",
+    "scheduling": "Automation & scheduling",
+    "scheduler": "Automation & scheduling",
+    "schedule": "Automation & scheduling",
+    "schedules": "Automation & scheduling",
+    "timer": "Automation & scheduling",
+    "timers": "Automation & scheduling",
+    "routine": "Automation & scheduling",
+    "routines": "Automation & scheduling",
+    "blueprint": "Automation & scheduling",
+    "blueprints": "Automation & scheduling",
     "climate": "Climate & heating",
     "climate & heating": "Climate & heating",
     "heating": "Climate & heating",
     "hvac": "Climate & heating",
     "cooling": "Climate & heating",
     "thermostat": "Climate & heating",
+    "cover": "Covers & blinds",
+    "covers": "Covers & blinds",
+    "covers & blinds": "Covers & blinds",
+    "blind": "Covers & blinds",
+    "blinds": "Covers & blinds",
+    "shade": "Covers & blinds",
+    "shades": "Covers & blinds",
+    "shutter": "Covers & blinds",
+    "shutters": "Covers & blinds",
+    "curtain": "Covers & blinds",
+    "curtains": "Covers & blinds",
+    "awning": "Covers & blinds",
+    "garage": "Covers & blinds",
+    "garage door": "Covers & blinds",
+    "gate": "Covers & blinds",
     "dashboard": "Dashboard & theming",
     "dashboard & theming": "Dashboard & theming",
     "theme": "Dashboard & theming",
@@ -322,6 +480,21 @@ NEW_ITEM_CATEGORY_ALIASES = {
     "power": "Energy & solar",
     "electricity": "Energy & solar",
     "battery": "Energy & solar",
+    "garden": "Garden & water",
+    "garden & water": "Garden & water",
+    "gardening": "Garden & water",
+    "irrigation": "Garden & water",
+    "watering": "Garden & water",
+    "sprinkler": "Garden & water",
+    "sprinklers": "Garden & water",
+    "plant": "Garden & water",
+    "plants": "Garden & water",
+    "lawn": "Garden & water",
+    "mower": "Garden & water",
+    "pool": "Garden & water",
+    "spa": "Garden & water",
+    "aquarium": "Garden & water",
+    "water": "Garden & water",
     "health": "Health & fitness",
     "health & fitness": "Health & fitness",
     "fitness": "Health & fitness",
@@ -337,7 +510,10 @@ NEW_ITEM_CATEGORY_ALIASES = {
     "network": "Network & infrastructure",
     "network & infrastructure": "Network & infrastructure",
     "infrastructure": "Network & infrastructure",
-    "system": "Network & infrastructure",
+    # "system" deliberately does NOT live here. Until v1.17.0 it pointed at
+    # Network & infrastructure, which was the single most damaging entry in
+    # this table: "system" is the one-word answer a model gives for every
+    # Home-Assistant-watching tool, and there was nowhere for those to go.
     "router": "Network & infrastructure",
     "nas": "Network & infrastructure",
     "notifications": "Notifications & voice",
@@ -358,6 +534,41 @@ NEW_ITEM_CATEGORY_ALIASES = {
     "alarm": "Security & cameras",
     "lock": "Security & cameras",
     "doorbell": "Security & cameras",
+    "sensor": "Sensors & devices",
+    "sensors": "Sensors & devices",
+    "sensors & devices": "Sensors & devices",
+    "device": "Sensors & devices",
+    "devices": "Sensors & devices",
+    "bluetooth": "Sensors & devices",
+    "ble": "Sensors & devices",
+    "button": "Sensors & devices",
+    "buttons": "Sensors & devices",
+    "serial": "Sensors & devices",
+    "usb": "Sensors & devices",
+    "dongle": "Sensors & devices",
+    "hardware": "Sensors & devices",
+    "system": "System & diagnostics",
+    "system & diagnostics": "System & diagnostics",
+    "diagnostics": "System & diagnostics",
+    "diagnostic": "System & diagnostics",
+    "monitoring": "System & diagnostics",
+    "monitor": "System & diagnostics",
+    "logs": "System & diagnostics",
+    "logging": "System & diagnostics",
+    "logbook": "System & diagnostics",
+    "database": "System & diagnostics",
+    "recorder": "System & diagnostics",
+    "statistics": "System & diagnostics",
+    "stats": "System & diagnostics",
+    "backup": "System & diagnostics",
+    "backups": "System & diagnostics",
+    "maintenance": "System & diagnostics",
+    "debug": "System & diagnostics",
+    "debugging": "System & diagnostics",
+    "performance": "System & diagnostics",
+    "updates": "System & diagnostics",
+    "tools": "System & diagnostics",
+    "developer tools": "System & diagnostics",
     "tasks": "Tasks & calendar",
     "tasks & calendar": "Tasks & calendar",
     "task": "Tasks & calendar",
@@ -390,7 +601,17 @@ NEW_ITEM_CATEGORY_ALIASES = {
     "unknown": "Other",
 }
 # Bumping this invalidates every cached AI verdict on purpose.
-NEW_ITEM_AI_PROMPT_VERSION = 1
+#
+# v1 -> v2 (v1.17.0): five new categories, a one-line definition per category
+# in the prompt, and "use Other only when nothing else fits" replaced with
+# "Other means not about the home at all". Every item is re-asked on upgrade;
+# dismissals and never-hide overrides are stored separately and are untouched.
+#
+# ⚠ ``get_ai`` returns None for a record stamped with an older version, so any
+# caller that needs the *last known* category of an item the AI will never be
+# asked about again — a dismissed one — must pass ``include_stale=True``. See
+# ``NewItemRegistry.get_ai`` and the restore-by-category path in __init__.py.
+NEW_ITEM_AI_PROMPT_VERSION = 2
 
 SERVICE_DISMISS_NEW_ITEMS = "dismiss_new_items"
 SERVICE_RESTORE_NEW_ITEMS = "restore_new_items"

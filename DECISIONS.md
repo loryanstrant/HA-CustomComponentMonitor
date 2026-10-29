@@ -345,3 +345,134 @@ dialog closes itself rather than confirming nothing.
 race with whatever refreshes behind it. Capture the *selector*, resolve it on
 confirm, and the dialog can never act on stale data — or re-render the label
 against data it is no longer going to use.
+
+## 2026-10-29 — "Other" was the taxonomy's fault, not the queue's
+
+`Other` had become the biggest group on the New in HACS card — 96 of 165 on
+screen for the owner, and 58 of 127 when the live sensor was read on 2026-10-27.
+The first hypothesis, reasonably, was the backlog: over 300 items had gone
+through the queue, so perhaps most of them simply had not been sorted yet.
+
+The sensor settled it in one read. `ai_pending: 0`, `ai_in_progress: false`,
+`ai_last_error: None`, last run finished the previous day, throughput 178
+items/minute. Every one of those 58 items was a **cached verdict** — the model
+had looked at each one and chosen `Other` deliberately. The 1.15.1 pacing work
+was not implicated at all.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| What to fix | **The category set and the prompt** | Anything in the queue or the pacing |
+| How many new categories | **Five** — System & diagnostics, Automation & scheduling, Garden & water, Covers & blinds, Sensors & devices | Merging into ~8 broader ones; adding none and accepting `Other` |
+| What the model is shown | **Every label with a one-sentence definition**, catalogue first | Sixteen bare labels, as before |
+| How `Other` is described | **Positively** — "not about a home or Home Assistant at all" | "Use `Other` only when nothing else fits" |
+| Who still pays for an AI call | **Every item**, as before | The rules-first hybrid (rejected again) |
+
+Reading all 58 by hand is what produced the categories rather than guessing
+them: ~24 were tooling for Home Assistant *itself* (entity audits, recorder
+extensions, discrete statistics, integration pins, backup helpers) — the house's
+own plumbing, which the taxonomy had no word for at all; ~10 wanted covers,
+irrigation, schedulers or small device bridges; only ~5 were genuinely
+off-topic. A set of labels that has no home for the single largest thing the
+store publishes is not a model problem.
+
+Two wording faults made it worse. Sixteen bare labels is a multiple-choice
+question with no key, so the model was inferring each category's scope from its
+name — and "System & diagnostics" is exactly the kind of label whose boundary
+cannot be guessed. Worse, the instruction *"use 'Other' only when nothing else
+fits"* reads to a 9B model as permission rather than as a last resort; it now
+says what `Other` **is** instead of when to reach for it. The definitions are
+also placed *first*, ahead of the item being judged, because they are byte-for-byte
+identical across a batch and the local backend's prefix cache can then reuse the
+longest possible prefix for every call in a wave.
+
+The old alias `"system" → Network & infrastructure` was the single most damaging
+entry in the table: "system" is the one-word answer a small model reaches for
+when a repository is HA plumbing, so entity audits and recorder tools were being
+filed under networking. It now points at the new bucket. The genuinely
+networking aliases (`network`, `infrastructure`, `router`, `nas`) were left alone.
+
+**Lesson:** when a classifier's output is lopsided, read the actual rows before
+touching the classifier. One sensor read ruled out the queue, and one afternoon
+with 58 names produced both the missing categories and the two prompt faults —
+neither of which would have been found by making the model bigger, the batch
+smaller or the budget longer. And a label list is a prompt: a bare enum asks the
+model to invent the boundaries you forgot to write down.
+
+## 2026-10-29 — `kind` is evidence, and the card already knew it was a card
+
+About 15 of those 58 `Other` items were Lovelace cards with no domain subject at
+all — tap confirmations, date pickers, autocomplete rows, wall panels. The model
+was right that they are not about lighting or energy. It was never told the one
+fact that settles them: the sensor already knows each item's `kind`, and `kind ==
+"card"` means the thing *is* dashboard furniture.
+
+So a card whose verdict comes back `Other` is stored as `Dashboard & theming`.
+The rule is a module-level pure function beside the existing `ai_scope_hides`,
+and it is applied at the single place that writes the AI cache. That placement is
+the whole decision: the cached verdict, the category published on the sensor
+attribute and the category `restore_new_items` matches dismissed items on are
+three different readers, and a version of this rule that fixed only one of them
+would have shown "Dashboard & theming" until the next scan quietly put it back.
+It cannot live in `_normalise_new_item_category`, which is a static method taking
+only the raw string and has no access to the item.
+
+It only ever **promotes the fallback**. A card the model placed in `Lighting`
+stays in `Lighting` — the rule adds information where there was none rather than
+overruling a judgement. It also still applies on the country-hide path, because a
+hidden item's category is what restore matches on later.
+
+The prompt was told the same fact in words as well, so the model gets the chance
+to be right by itself; the post-rule is the backstop for when it is not.
+
+**Lesson:** before improving a model's answer, check whether the caller already
+holds the fact the model was guessing at. Structured data you have is strictly
+better than inference you paid for — and the place to apply it is the single
+choke point that writes the value, not wherever you noticed the problem.
+
+## 2026-10-29 — A cache version bump is a change to every reader of that cache
+
+Re-sorting the whole store on upgrade is one line: bump
+`NEW_ITEM_AI_PROMPT_VERSION`, and `get_ai` returns `None` for every record
+stamped with the old number, so every item is asked again with the better
+question. That is the designed mechanism and it was used as designed.
+
+It would also have broken `restore_new_items`, permanently, and the failure is
+worth recording because it is invisible from the line that causes it.
+
+Restore-by-category is the **only** consumer of the AI cache for items the card
+no longer shows: a dismissed item is not in the sensor's list, so the category it
+carried when it was dismissed exists nowhere else. And a dismissed item is never
+re-queued — the AI queue is built from the visible set — so a `None` from `get_ai`
+is not a gap that the next pass fills, it is permanent. After the bump, all 705
+dismissed items would have resolved to the fallback: *restore "Energy & solar"*
+would have restored nothing, and *restore "Other"* would have un-dismissed the
+entire backlog in one tap. The destructive half is the one with no error message.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| How the restore path reads a stale verdict | **`get_ai(..., include_stale=True)`**, passed only there | Re-sending dismissed items to the AI; dropping the version gate entirely |
+| What restore-by-category means | The category the item carried **when it was dismissed** | The category it would get today |
+| Every other caller | Unchanged — the gate still applies | A global opt-out |
+
+The stale record is genuinely still on disk to read: the store's cleaner
+preserves unknown keys including `prompt_version`, and pruning skips anything
+dismissed. Checked at the same time, and safe: dismissals, never-hide exemptions
+and hide records live in separate dicts that never consult `prompt_version`, so
+the bump cannot lose a dismissal or re-hide something the user manually restored.
+
+The card's own answer to the taxonomy growing from four groups in practice to
+~20 belongs to the same release: **every group now starts folded**, with an
+`Expand all` / `Collapse all` control in the existing chip row. "First two open"
+was right at four groups and wrong at twenty — it meant scrolling past two long
+lists to reach the rest of the week's drop. The defaults are computed from the
+full, unfiltered set of categories so the kind filter never reshuffles which
+groups are open, and the toggle acts on every category the pass knows about
+rather than only the visible ones: a user who asks for "all" must not have a
+filtered-out group reappear half-open when they clear the filter.
+
+**Lesson:** a cache invalidation is a change to every reader of that cache, and
+the dangerous reader is the one whose data the invalidation can never restore.
+Before bumping a version stamp, enumerate who reads the stamped records and ask
+what each of them does with `None` — the answer here was "nothing" in one place
+and "un-dismiss 705 items" in another, and both were two lines away from a
+constant that looked like it only affected the model.

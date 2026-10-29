@@ -515,7 +515,9 @@ class NewItemRegistry:
 
     # -- AI verdict cache ----------------------------------------------------------
 
-    def get_ai(self, full_name: str) -> dict[str, Any] | None:
+    def get_ai(
+        self, full_name: str, *, include_stale: bool = False
+    ) -> dict[str, Any] | None:
         """The cached AI verdict for *full_name*.
 
         Returns ``None`` when there is no cached verdict, or when there is
@@ -523,11 +525,32 @@ class NewItemRegistry:
         ``NEW_ITEM_AI_PROMPT_VERSION`` is bumped deliberately to invalidate
         every cached verdict at once, so a stale one must never be handed
         back as current.
+
+        ``include_stale=True`` asks for the record whatever version produced
+        it, and exists for exactly one situation: an item the AI will never
+        be asked about again. The batch runner builds its queue from the
+        *visible* items, so a **dismissed** repository is never re-categorised
+        — which makes the version check, for that one caller, not "this answer
+        is out of date" but "there is no answer and there never will be".
+        Without this flag, ``restore_new_items`` with a ``category`` selector
+        went blind for every dismissed item the moment the version was bumped:
+        each one read as the fallback, so restoring any real category matched
+        none of them and restoring "Other" matched all of them at once.
+
+        The record genuinely survives to be read — :func:`_clean_ai` preserves
+        ``prompt_version`` across a restart, and :meth:`prune` skips anything
+        dismissed — so what comes back is the category the item carried when
+        it was dismissed, which is also the category the user saw on the card
+        at the moment they dismissed it. That, not a re-derived modern
+        category, is the right answer for "restore the group I dismissed".
         """
         record = self._ai.get(item_key(full_name))
         if record is None:
             return None
-        if record.get("prompt_version") != NEW_ITEM_AI_PROMPT_VERSION:
+        if (
+            not include_stale
+            and record.get("prompt_version") != NEW_ITEM_AI_PROMPT_VERSION
+        ):
             return None
         return dict(record)
 

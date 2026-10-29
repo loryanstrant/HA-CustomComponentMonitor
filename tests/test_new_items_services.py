@@ -26,12 +26,14 @@ from custom_components.custom_component_monitor.const import (
     CONF_AI_CATEGORIZATION_ENABLED,
     CONF_AI_TASK_ENTITY,
     DOMAIN,
+    NEW_ITEM_AI_PROMPT_VERSION,
     NEW_ITEM_CATEGORY_FALLBACK,
     NEW_ITEM_CATEGORY_OPTIONS,
     SERVICE_CATEGORISE_NEW_ITEMS,
     SERVICE_DISMISS_NEW_ITEMS,
     SERVICE_RESTORE_NEW_ITEMS,
 )
+from custom_components.custom_component_monitor.new_items import item_key
 
 ALPHA = "owner/alpha"
 BETA = "owner/beta"
@@ -341,6 +343,111 @@ async def test_restore_by_category_reaches_the_hidden_set(setup_integration):
     # HIDDEN_ONE is categorised "Lighting" in the fixture scan result.
     assert registry.hidden_record(HIDDEN_ONE) is None
     assert registry.is_never_hide(HIDDEN_ONE) is True
+
+
+async def test_restore_by_category_reaches_dismissed_items_by_their_cached_verdict(
+    setup_integration,
+):
+    """A dismissed item is not in the sensor's list, so its category is cached.
+
+    Restore-by-category is the only reader of the AI cache for items the card
+    no longer shows, and ``registry.dismissed_keys`` is the only place they are
+    listed at all.
+    """
+    hass, _entry = setup_integration
+    registry = _coordinator(hass).new_items_registry
+    registry.dismiss("owner/solar-thing")
+    registry.set_ai(
+        "owner/solar-thing",
+        category="Energy & solar",
+        country_scope="global",
+        model="test",
+    )
+    registry.dismiss("owner/lamp-thing")
+    registry.set_ai(
+        "owner/lamp-thing", category="Lighting", country_scope="global", model="test"
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RESTORE_NEW_ITEMS,
+        {"category": "Energy & solar"},
+        blocking=True,
+    )
+
+    assert registry.is_dismissed("owner/solar-thing") is False
+    assert registry.is_dismissed("owner/lamp-thing") is True
+
+
+async def test_restore_by_category_survives_a_prompt_version_bump(setup_integration):
+    """The v1.17.0 re-sort must not blind restore-by-category.
+
+    Bumping ``NEW_ITEM_AI_PROMPT_VERSION`` makes the plain ``get_ai`` return
+    None for every record stamped with the old version, and a dismissed item is
+    never re-sent to the AI — the queue is built from the visible set — so that
+    None is permanent. Before ``include_stale`` existed, this test's two items
+    would both have read as "Other": restoring "Energy & solar" would have
+    restored nothing, and restoring "Other" would have restored the entire
+    dismissed backlog in one tap.
+    """
+    hass, _entry = setup_integration
+    registry = _coordinator(hass).new_items_registry
+    for full_name, category in (
+        ("owner/solar-thing", "Energy & solar"),
+        ("owner/lamp-thing", "Lighting"),
+    ):
+        registry.dismiss(full_name)
+        registry.set_ai(
+            full_name, category=category, country_scope="global", model="test"
+        )
+        # Exactly what an upgrade looks like on disk: the record survives, its
+        # stamped version does not match the constant any more.
+        registry._ai[item_key(full_name)]["prompt_version"] = (
+            NEW_ITEM_AI_PROMPT_VERSION - 1
+        )
+    assert registry.get_ai("owner/solar-thing") is None
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RESTORE_NEW_ITEMS,
+        {"category": "Energy & solar"},
+        blocking=True,
+    )
+
+    assert registry.is_dismissed("owner/solar-thing") is False
+    assert registry.is_dismissed("owner/lamp-thing") is True
+
+
+async def test_restore_other_does_not_sweep_up_every_stale_dismissal(
+    setup_integration,
+):
+    """The other half of the same bug, and the destructive half.
+
+    With every stale record reading as None, every dismissed item would have
+    matched the fallback category — so "restore Other" was a button that
+    un-dismissed the whole backlog.
+    """
+    hass, _entry = setup_integration
+    registry = _coordinator(hass).new_items_registry
+    registry.dismiss("owner/solar-thing")
+    registry.set_ai(
+        "owner/solar-thing",
+        category="Energy & solar",
+        country_scope="global",
+        model="test",
+    )
+    registry._ai[item_key("owner/solar-thing")]["prompt_version"] = (
+        NEW_ITEM_AI_PROMPT_VERSION - 1
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RESTORE_NEW_ITEMS,
+        {"category": NEW_ITEM_CATEGORY_FALLBACK},
+        blocking=True,
+    )
+
+    assert registry.is_dismissed("owner/solar-thing") is True
 
 
 async def test_restore_unknown_repository_does_not_raise(setup_integration):

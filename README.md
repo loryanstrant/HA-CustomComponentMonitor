@@ -435,7 +435,10 @@ Every option below is available in the visual editor — no YAML required.
 
 - Lists not-yet-installed repositories flagged new by HACS
 - Hides items matching your home country (with an audit list showing the match)
-- Groups items alphabetically by what they do, with "Other" pinned last
+- Groups items alphabetically by what they do, with "Other" pinned last — 20 groups, from
+  "Automation & scheduling" to "Weather & environment" (v1.17.0 added five of them)
+- **Every group starts folded**, with **Expand all** / **Collapse all** beside the filter
+  chips (v1.17.0+)
 - Filter chips for All / Integrations / Cards
 - **Dismiss all (n)** button per group — it asks for confirmation first — or tick individual
   items and **Dismiss N selected**
@@ -514,6 +517,13 @@ The practical effect: the backlog clears as fast as your hardware allows. A loca
 answering in ~0.45 s per item clears a 177-item backlog in about two minutes. A slow cloud
 model simply takes more passes, at the same five-second spacing, with no configuration change
 and no manual service call.
+
+**When the groups change, everything re-sorts itself.** A release that changes the group list
+or the question the AI is asked (v1.17.0 did both) throws away the stored answers, so every
+item is sorted again automatically after the restart — no service call, nothing to press. It
+is the same background sorting as above, so it takes a couple of minutes on a local model and
+the card stays usable while it runs. Items you have dismissed stay dismissed, and anything you
+restored by hand stays visible.
 
 #### Services
 

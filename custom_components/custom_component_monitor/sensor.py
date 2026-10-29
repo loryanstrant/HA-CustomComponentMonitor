@@ -80,6 +80,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     NEW_ITEM_CATEGORY_ALIASES,
+    NEW_ITEM_CATEGORY_DEFINITIONS,
     NEW_ITEM_CATEGORY_FALLBACK,
     NEW_ITEM_CATEGORY_OPTIONS,
     NEW_ITEMS_AI_CATCHUP_SECONDS,
@@ -109,6 +110,18 @@ from .new_items import NewItemRegistry, display_name_for
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+
+# The category catalogue handed to the model, built once (v1.17.0).
+#
+# Built at import rather than per item for two reasons. It is identical for
+# every item in a run, so re-joining ~20 definitions a few hundred times is
+# pure waste; and because it is identical it belongs at the *front* of the
+# prompt, where a local backend's prefix cache can reuse it across the whole
+# batch instead of re-reading it for each listing.
+NEW_ITEM_CATEGORY_CATALOGUE = "\n".join(
+    f"- {label}: {NEW_ITEM_CATEGORY_DEFINITIONS[label]}"
+    for label in NEW_ITEM_CATEGORY_OPTIONS
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1687,6 +1700,27 @@ def ai_scope_hides(
     return not verdict.home_matches
 
 
+def card_category_override(kind: Any, category: str) -> str:
+    """A Lovelace card that came back 'Other' is dashboard furniture (v1.17.0).
+
+    HACS lists a great many cards whose whole subject is the dashboard —
+    a date picker, a confirm-tap wrapper, an autocomplete row, a timeline, a
+    wall-panel mode. There is no *home* domain to put them in, so the model
+    quite reasonably says 'Other'; but ``kind`` already proves the thing is
+    frontend, which is a better answer than 'Other' and the one a reader
+    expects. Measured on the production store: ~15 of 58 'Other' items.
+
+    Only ever promotes the fallback. A card the AI placed somewhere specific
+    ("Energy & solar" for a power-flow card) keeps that category, because the
+    subject is more useful than the medium.
+    """
+    if category != NEW_ITEM_CATEGORY_FALLBACK:
+        return category
+    if str(kind or "").strip().lower() != "card":
+        return category
+    return "Dashboard & theming"
+
+
 # ---------------------------------------------------------------------------
 # Coordinator
 # ---------------------------------------------------------------------------
@@ -2936,15 +2970,23 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``country_scope`` is re-read by ``scan_new_items`` on every later
         cycle, which is the only place visibility is ever decided — hence both
         sides going through the one :func:`ai_scope_hides` predicate.
+
+        :func:`card_category_override` is applied here, before the cache
+        write, because this method is the only place in production that calls
+        ``set_ai``. Overriding once at the choke point means the cached
+        verdict, the in-memory item the sensor publishes, and the category
+        ``restore_new_items`` later reads back for a dismissed item are all
+        the same string, with no second copy of the rule to fall out of step.
         """
         full_name = item["full_name"]
+        category = card_category_override(item.get("kind"), result["category"])
         self.new_items_registry.set_ai(
             full_name,
-            category=result["category"],
+            category=category,
             country_scope=result["country_scope"],
             model=ai_entity,
         )
-        item["category"] = result["category"]
+        item["category"] = category
         item["ai_pending"] = False
 
         if (
@@ -3119,18 +3161,35 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         description = item.get("description") or ""
         topics = ", ".join(item.get("topics") or [])
 
+        # Static catalogue first, item second. See
+        # NEW_ITEM_CATEGORY_CATALOGUE for why the order matters.
         base = (
-            "A Home Assistant HACS store listing is being triaged for a "
-            "'New in HACS' review card.\n"
+            "You are triaging listings from the Home Assistant HACS store "
+            "for a 'New in HACS' review card.\n\n"
+            "Pick exactly one of these categories, using the label verbatim "
+            "and never inventing a new one:\n"
+            f"{NEW_ITEM_CATEGORY_CATALOGUE}\n\n"
+            "Rules for choosing:\n"
+            "- Always choose the closest category on the list, even when the "
+            "fit is imperfect. A rough fit is more useful to the reader than "
+            "'Other'.\n"
+            "- 'Other' means the repository is not about a home or about "
+            "Home Assistant at all. It is not a way to say 'none of these is "
+            "exactly right'.\n"
+            "- If it manages or inspects Home Assistant itself — entities, "
+            "devices, integrations, logs, the database, statistics, backups, "
+            "updates — that is 'System & diagnostics', not "
+            "'Network & infrastructure'.\n"
+            "- If the Kind below is 'card' and no other category clearly "
+            "applies, it is 'Dashboard & theming'.\n"
+            "- With a thin description, judge from the name and the topics "
+            "rather than falling back to 'Other'.\n\n"
+            "The listing:\n"
             f"Name: {name}\n"
             f"Repository: {item.get('full_name', '')}\n"
             f"Kind: {item.get('kind', '')}\n"
             f"Description: {description or '(none provided)'}\n"
             f"Topics: {topics or '(none)'}\n\n"
-            "Choose the single category that best fits, using one of these "
-            "labels exactly (do not invent new ones): "
-            f"{', '.join(NEW_ITEM_CATEGORY_OPTIONS)}. "
-            "Use 'Other' only when nothing else fits.\n"
             "Then say whether this is built for use in one particular "
             "country (e.g. a national postal service, a local utility or "
             "transit authority) — if so, name that country; otherwise say "
