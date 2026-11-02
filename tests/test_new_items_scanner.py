@@ -861,3 +861,96 @@ async def test_ai_categorisation_is_skipped_when_ai_is_disabled(hass: HomeAssist
 
     call.assert_not_awaited()
     assert counts == {"generated": 0, "failed": 0, "skipped": 0, "remaining": 0}
+
+
+async def test_hidden_audit_and_dismissed_counts_survive_hacs_clear_after_window(hass, registry):
+    registry.note_seen(FOREIGN_ITEM, now=at(90))
+    registry.record_hidden(FOREIGN_ITEM, country="SE", term="Sweden", field="description", source="rules")
+    registry.note_seen(DISMISSED_ITEM, now=at(90))
+    registry.dismiss(DISMISSED_ITEM)
+    repos = {key: {**repo, "new": False} for key, repo in REPOS.items()}
+    scanner = ComponentScanner(hass, None)
+    with patch.object(scanner, "_load_hacs_repositories", AsyncMock(return_value=repos)):
+        result = await scanner.scan_new_items(registry)
+    assert by_full_name(result["hidden"], FOREIGN_ITEM)
+    assert result["dismissed_count"] == 1
+    assert by_full_name(result["items"], STALE_ITEM) is None
+
+
+async def test_restore_after_window_and_reload_preserves_first_seen(hass, registry):
+    registry.note_seen(FOREIGN_ITEM, now=at(90))
+    original = registry.first_seen(FOREIGN_ITEM)
+    registry.record_hidden(FOREIGN_ITEM, country="SE", term="Sweden", field="description", source="rules")
+    registry.restore(FOREIGN_ITEM)
+    reloaded = NewItemRegistry(hass)
+    reloaded._store = MagicMock(async_load=AsyncMock(return_value=registry._as_raw()))
+    await reloaded.async_load()
+    repos = {key: {**repo, "new": False} for key, repo in REPOS.items()}
+    scanner = ComponentScanner(hass, None)
+    with patch.object(scanner, "_load_hacs_repositories", AsyncMock(return_value=repos)):
+        result = await scanner.scan_new_items(reloaded)
+    assert by_full_name(result["items"], FOREIGN_ITEM)
+    assert reloaded.first_seen(FOREIGN_ITEM) == original
+    assert reloaded.is_never_hide(FOREIGN_ITEM)
+
+
+async def test_ai_hide_syncs_hacs_without_waiting_for_hourly_scan(new_items_coordinator):
+    from tests.test_hacs_sync import make_hacs
+    coord = new_items_coordinator
+    item = new_item("owner/swedish-thing")
+    coord.data = {"new_items": {"items": [item], "hidden": []}}
+    _hacs, repos, persisted = make_hacs(coord.hass, [item["full_name"], "owner/keep"])
+    with patch.object(coord, "_async_ai_call", AsyncMock(return_value={"category": "Energy & solar", "country_scope": "SE"})):
+        await coord.async_generate_new_item_categories()
+    assert repos[item["full_name"]].data.new is False
+    assert persisted[item["full_name"]].get("new", False) is False
+    assert repos["owner/keep"].data.new is True
+
+
+async def test_delayed_ai_cannot_hide_a_restored_item(new_items_coordinator):
+    from tests.test_hacs_sync import make_hacs
+    coord = new_items_coordinator
+    item = new_item("owner/alpha")
+    coord.data = {"new_items": {"items": [item], "hidden": []}}
+    _, repos, _ = make_hacs(coord.hass, ["owner/alpha"])
+
+    async def answer(*args):
+        async with coord.new_items_review_lock:
+            coord.new_items_registry.dismiss("owner/alpha")
+            coord.new_items_registry.restore("owner/alpha")
+            await coord.async_sync_new_items_hacs(coord.data["new_items"])
+        return {"category": "Lighting", "country_scope": "SE"}
+
+    with patch.object(coord, "_async_ai_call", AsyncMock(side_effect=answer)):
+        await coord.async_generate_new_item_categories()
+    assert coord.data["new_items"]["hidden"] == []
+    assert repos["owner/alpha"].data.new is True
+
+
+async def test_delayed_ai_cannot_overwrite_a_dismissal(new_items_coordinator):
+    coord = new_items_coordinator
+    item = new_item("owner/alpha")
+    coord.data = {"new_items": {"items": [item], "hidden": []}}
+
+    async def answer(*args):
+        async with coord.new_items_review_lock:
+            coord.new_items_registry.dismiss("owner/alpha")
+        return {"category": "Lighting", "country_scope": "SE"}
+
+    with patch.object(coord, "_async_ai_call", AsyncMock(side_effect=answer)):
+        counts = await coord.async_generate_new_item_categories()
+    assert counts["skipped"] == 1
+    assert coord.new_items_registry.is_dismissed("owner/alpha")
+    assert coord.new_items_registry.hidden_record("owner/alpha") is None
+
+
+async def test_old_dismissal_without_seen_record_is_counted_after_hacs_clear(hass, registry):
+    registry.dismiss(DISMISSED_ITEM)
+    registry._seen.clear()  # old size-pruned v1 registry
+    repos = {key: {**repo, 'new': False} for key, repo in REPOS.items()}
+    scanner = ComponentScanner(hass, None)
+    with patch.object(scanner, '_load_hacs_repositories', AsyncMock(return_value=repos)):
+        result = await scanner.scan_new_items(registry)
+    assert result['dismissed_count'] == 1
+    assert registry.first_seen(DISMISSED_ITEM)
+    assert result['items'] == []

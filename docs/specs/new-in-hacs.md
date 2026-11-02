@@ -126,8 +126,9 @@ categorisation (Bug fixes / New features / …) and must not be conflated with i
 - **No cloud AI.** Categorisation uses the local AI task entity already configured.
 - **No GitHub API calls** at scan time. Everything comes from HACS's own cached index, so
   items with no description and no topics stay thinly described rather than triggering a fetch.
-- **No change to production HA** beyond reading its HACS store file. No prod restart, no
-  prod install; testing happens on the DEV instance.
+- **No production installs or restarts without explicit approval.** Since 1.17.2, review
+  decisions also update targeted HACS New flags through its runtime writer; testing happens
+  on DEV. The original read-only constraint is superseded by the approved sync behavior.
 - **No notifications or to-do items** for new arrivals in this version.
 - **Not a replacement for the HACS panel** — discovery and search stay there.
 
@@ -302,3 +303,30 @@ item has been dismissed loses its fold state, which is correct — it no longer 
 | # | Criterion | How it is verified |
 |---|---|---|
 | A23 | `Expand all` / `Collapse all` always does what its own label says, including after a group has been emptied by *Dismiss all* | Behavioural run of the real card source over the five fold-state scenarios |
+
+
+## Addendum — 1.17.2: dismiss in HACS too
+
+Review decisions now update HACS itself: manual dismissals and rules/AI country hides
+clear the selected repository’s New flag; explicit Restore marks the eligible repository
+New in both lists. The first scan after upgrade reconciles old dismissals and current
+country hides, using the full registry/internal scan rather than capped sensor lists.
+Unreviewed items and unsupported HACS categories are untouched.
+
+HACS owns its persistence and frontend dispatch. The monitor resolves individual live
+repository objects and awaits one `hacs.data.async_write()` per changed batch. It never
+edits HACS storage, downloads repositories, or clears categories wholesale. The private
+runtime interface is guarded; unavailable/disabled HACS and failed writes leave durable
+intent for later scans and expose `hacs_sync_pending` / `hacs_sync_last_error`.
+
+Saved dismissals, hidden audit entries and explicit restores remain usable beyond the
+30-day first-seen window after HACS clears its flag. Dates do not move forward; never-hide
+exemptions survive reload. An automatic filter change may cancel pending hides but never
+re-marks repositories New. Only an explicit Restore authorizes that reversal.
+
+Acceptance: targeted single/selection/category/all sync; old dismissal catch-up;
+rules/AI hide sync; explicit restore after 30 days and reload; failed/cancelled writes
+and later retry; stale AI result versus dismissal/restore; disabled options; full-set
+sync beyond 300/100 published rows; unchanged unreviewed flags. Covered by
+`test_hacs_sync.py` and the scanner/registry/service tests. Production activation and
+release-install verification remain separate approvals/verification stages.

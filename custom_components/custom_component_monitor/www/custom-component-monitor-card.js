@@ -2,7 +2,7 @@
  * Custom Component Monitor Card
  * A Lovelace card that displays unused HACS components.
  */
-var CARD_VERSION = "1.17.1";
+var CARD_VERSION = "1.17.2";
 
 var ALL_SECTIONS = ["integrations", "themes", "frontend"];
 

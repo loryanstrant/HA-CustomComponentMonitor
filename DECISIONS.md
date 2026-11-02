@@ -508,3 +508,23 @@ sync with, so a third reader added later inherits the agreement for free.
 moment a second reader derives something from its key set — a count, a direction, a label —
 the two readers have to be given the same keys, and the cheapest way to guarantee that is to
 make the map hold only what is live rather than to teach each reader which keys to ignore.
+
+
+## 2026-11-03 — Review decisions also clear HACS’s New flag
+
+The monitor’s Dismiss button and country hides previously changed only its local registry.
+Observed live on 3 November 2026: 28 visible, 806 dismissed and 119 hidden, while the owner
+still saw many rejected items in HACS New. The fix mirrors HACS’s targeted clear handler:
+resolve live repositories, set only their `data.new`, and let `hacs.data.async_write()` own
+serialization and frontend notifications. No direct edits of HACS’s sparse storage.
+
+The owner selected both manual and automatic-country syncing, and explicit Restore in
+both lists. Saved pending intent precedes HACS writes; old dismissals reconcile on scan.
+One review lock covers scan decisions, services and application of AI results—not the AI
+requests—so a delayed response cannot undo a dismissal or restore. Hidden audit and
+restored records bypass the ordinary 30-day window, without changing first-seen dates.
+Automatic country-rule changes never re-mark items New; explicit Restore does.
+
+**Lesson:** two interfaces offering the same review action need to share the underlying
+review state. A local filter is not upstream dismissal, and clearing upstream flags also
+changes the lifetime of every reader that formerly relied on those flags.

@@ -423,37 +423,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             field = _new_items_selected_field(call.data, SERVICE_DISMISS_NEW_ITEMS)
             registry = coordinator.new_items_registry
 
-            # "Currently visible" is exactly what sensor.hacs_new_items shows:
-            # the last scan's new, not-installed, not-dismissed, not-hidden
-            # items. Read it from there rather than re-scanning.
-            visible: list[dict[str, Any]] = (
-                (coordinator.data or {}).get("new_items") or {}
-            ).get("items", []) or []
+            async with coordinator.new_items_review_lock:
+                # "Currently visible" is exactly what sensor.hacs_new_items shows:
+                # the last scan's new, not-installed, not-dismissed, not-hidden
+                # items. Read it from there rather than re-scanning.
+                visible: list[dict[str, Any]] = (
+                    (coordinator.data or {}).get("new_items") or {}
+                ).get("items", []) or []
 
-            if field == "all":
-                targets = [item["full_name"] for item in visible]
-            elif field == "category":
-                wanted = call.data["category"]
-                targets = [
-                    item["full_name"]
-                    for item in visible
-                    if item.get("category") == wanted
-                ]
-            else:  # repositories — unknown/not-currently-visible names are
-                # skipped silently rather than dismissing an arbitrary string.
-                wanted_repos = {
-                    str(r).strip().lower() for r in call.data["repositories"]
-                }
-                targets = [
-                    item["full_name"]
-                    for item in visible
-                    if item["full_name"].strip().lower() in wanted_repos
-                ]
+                if field == "all":
+                    targets = [item["full_name"] for item in visible]
+                elif field == "category":
+                    wanted = call.data["category"]
+                    targets = [
+                        item["full_name"]
+                        for item in visible
+                        if item.get("category") == wanted
+                    ]
+                else:  # repositories — unknown/not-currently-visible names are
+                    # skipped silently rather than dismissing an arbitrary string.
+                    wanted_repos = {
+                        str(r).strip().lower() for r in call.data["repositories"]
+                    }
+                    targets = [
+                        item["full_name"]
+                        for item in visible
+                        if item["full_name"].strip().lower() in wanted_repos
+                    ]
 
-            for full_name in targets:
-                registry.dismiss(full_name)
-            await registry.async_save()
-            await coordinator.async_request_refresh()
+                for full_name in targets:
+                    registry.dismiss(full_name)
+                await coordinator.async_sync_new_items_hacs(
+                    (coordinator.data or {}).get("new_items") or {}
+                )
+            await coordinator.async_refresh()
 
         hass.services.async_register(
             DOMAIN,
@@ -475,51 +478,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             field = _new_items_selected_field(call.data, SERVICE_RESTORE_NEW_ITEMS)
             registry = coordinator.new_items_registry
 
-            if field == "repositories":
-                # registry.restore() is a no-op (returns False) for a name
-                # that was never dismissed or auto-hidden, so an unknown
-                # repository is skipped without needing a membership check.
-                targets = {str(r).strip() for r in call.data["repositories"]}
-            else:
-                # category/all reach the hidden AND dismissed sets. The
-                # auto-hidden items come straight off the last scan (they
-                # carry a category); the dismissed ones are by definition not
-                # in the sensor's visible list at all, so they come from the
-                # registry's own listing.
-                hidden: list[dict[str, Any]] = (
-                    (coordinator.data or {}).get("new_items") or {}
-                ).get("hidden", []) or []
-                dismissed_keys = registry.dismissed_keys
+            async with coordinator.new_items_review_lock:
+                if field == "repositories":
+                    # registry.restore() is a no-op (returns False) for a name
+                    # that was never dismissed or auto-hidden, so an unknown
+                    # repository is skipped without needing a membership check.
+                    targets = {str(r).strip() for r in call.data["repositories"]}
+                else:
+                    # category/all reach the hidden AND dismissed sets. The
+                    # auto-hidden items come straight off the last scan (they
+                    # carry a category); the dismissed ones are by definition not
+                    # in the sensor's visible list at all, so they come from the
+                    # registry's own listing.
+                    hidden: list[dict[str, Any]] = (
+                        (coordinator.data or {}).get("new_items") or {}
+                    ).get("hidden", []) or []
+                    dismissed_keys = registry.dismissed_keys
 
-                if field == "all":
-                    targets = {item["full_name"] for item in hidden}
-                    targets.update(dismissed_keys)
-                else:  # category
-                    wanted = call.data["category"]
-                    targets = {
-                        item["full_name"]
-                        for item in hidden
-                        if item.get("category") == wanted
-                    }
-                    for key in dismissed_keys:
-                        # include_stale: a dismissed item is never re-sent to
-                        # the AI, so after a NEW_ITEM_AI_PROMPT_VERSION bump
-                        # the plain call returns None for every one of them and
-                        # they all collapse onto the fallback category. See
-                        # NewItemRegistry.get_ai.
-                        ai_record = registry.get_ai(key, include_stale=True)
-                        category = (
-                            ai_record["category"]
-                            if ai_record
-                            else NEW_ITEM_CATEGORY_FALLBACK
-                        )
-                        if category == wanted:
-                            targets.add(key)
+                    if field == "all":
+                        targets = {item["full_name"] for item in hidden}
+                        targets.update(dismissed_keys)
+                    else:  # category
+                        wanted = call.data["category"]
+                        targets = {
+                            item["full_name"]
+                            for item in hidden
+                            if item.get("category") == wanted
+                        }
+                        for key in dismissed_keys:
+                            # include_stale: a dismissed item is never re-sent to
+                            # the AI, so after a NEW_ITEM_AI_PROMPT_VERSION bump
+                            # the plain call returns None for every one of them and
+                            # they all collapse onto the fallback category. See
+                            # NewItemRegistry.get_ai.
+                            ai_record = registry.get_ai(key, include_stale=True)
+                            category = (
+                                ai_record["category"]
+                                if ai_record
+                                else NEW_ITEM_CATEGORY_FALLBACK
+                            )
+                            if category == wanted:
+                                targets.add(key)
 
-            for full_name in targets:
-                registry.restore(full_name)
-            await registry.async_save()
-            await coordinator.async_request_refresh()
+                restored = {
+                    full_name.strip().lower()
+                    for full_name in targets
+                    if registry.restore(full_name)
+                }
+                new_items = (coordinator.data or {}).get("new_items") or {}
+                # Remove restored rows from the old audit snapshot before
+                # reconciling; otherwise that snapshot would re-queue a hide.
+                new_items["hidden"] = [
+                    item for item in new_items.get("hidden", [])
+                    if item["full_name"].strip().lower() not in restored
+                ]
+                await coordinator.async_sync_new_items_hacs(new_items)
+            await coordinator.async_refresh()
 
         hass.services.async_register(
             DOMAIN,
