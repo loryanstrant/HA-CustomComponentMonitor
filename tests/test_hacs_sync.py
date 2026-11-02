@@ -264,6 +264,35 @@ async def test_old_v1_registry_keeps_audit_and_dismissals_when_loading(hass, has
     assert registry.hacs_pending == {}
 
 
+async def test_superseded_ai_batch_does_not_sync_an_obsolete_hidden_list(coordinator):
+    coord = coordinator
+    reg = coord.new_items_registry
+    reg._loaded = True
+    reg._store = None
+    item = service_tests.new_item("owner/alpha", ai_pending=True)
+    hidden = service_tests.new_item("owner/previously-hidden")
+    coord.data = {"new_items": {"items": [item], "hidden": [hidden]}}
+    reg.record_hidden(hidden["full_name"], country="SE", term="Sweden",
+                      field="description", source="rules")
+    hacs, repos, _ = make_hacs(coord.hass, [item["full_name"], hidden["full_name"]])
+
+    async def newer_scan(*_args):
+        # A newer scan no longer finds foreign evidence before the old AI
+        # response arrives. The previous clear was never committed to HACS.
+        async with coord.new_items_review_lock:
+            reg.clear_hidden(hidden["full_name"])
+            coord.data = {"new_items": {"items": [hidden], "hidden": []}}
+            await coord.async_sync_new_items_hacs(coord.data["new_items"])
+        return [{"category": "Lighting", "country_scope": "global"}]
+
+    with patch.object(coord, "_async_run_new_items_ai_wave", AsyncMock(side_effect=newer_scan)):
+        counts = await coord.async_generate_new_item_categories()
+    assert counts["skipped"] == 1
+    assert repos[hidden["full_name"]].data.new is True
+    assert reg.hacs_pending == {}
+    hacs.data.async_write.assert_not_awaited()
+
+
 @pytest.mark.parametrize('service', [SERVICE_DISMISS_NEW_ITEMS, SERVICE_RESTORE_NEW_ITEMS])
 async def test_review_actions_force_immediate_refresh_not_throttled_request(setup_integration, service):
     hass, _ = setup_integration

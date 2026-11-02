@@ -3183,7 +3183,11 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 settings=self._new_items_settings(),
                                 ai_entity=ai_entity,
                             )
-                        await self.async_sync_new_items_hacs(new_items)
+                        # A newer scan may have replaced this batch's snapshot.
+                        # Reconcile current decisions, never its obsolete hides.
+                        await self.async_sync_new_items_hacs(
+                            (self.data or {}).get("new_items") or {}
+                        )
 
                     self._record_new_items_ai_rate(len(wave), ok, elapsed)
                     self._adapt_new_items_ai_wave(len(wave), ok, elapsed)
