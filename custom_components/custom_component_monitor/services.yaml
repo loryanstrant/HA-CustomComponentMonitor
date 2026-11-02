@@ -84,7 +84,8 @@ generate_summaries:
 dismiss_new_items:
   name: "Dismiss new HACS items"
   description: >-
-    Dismiss one or more items from the "New in HACS" review card. Give
+    Dismiss one or more items from the "New in HACS" review card and clear
+    their New status in HACS. Give
     exactly one of repositories, category or all — it acts on whatever
     sensor.hacs_new_items is currently showing as new.
   fields:
@@ -136,8 +137,9 @@ dismiss_new_items:
 restore_new_items:
   name: "Restore new HACS items"
   description: >-
-    Bring back items previously dismissed or auto-hidden on the "New in
-    HACS" review card. Give exactly one of repositories, category or all.
+    Bring back eligible, uninstalled items previously dismissed or auto-hidden
+    in both the "New in HACS" review card and HACS’s New listing. Give
+    exactly one of repositories, category or all.
     An item restored from auto-hide is also marked "never hide again", so
     the country rule can't immediately hide it a second time.
   fields:

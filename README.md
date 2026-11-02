@@ -434,7 +434,7 @@ Every option below is available in the visual editor — no YAML required.
 #### Card Features
 
 - Lists not-yet-installed repositories flagged new by HACS
-- Hides items matching your home country (with an audit list showing the match)
+- Hides items built for another country (with an audit list showing the match)
 - Groups items alphabetically by what they do, with "Other" pinned last — 20 groups, from
   "Automation & scheduling" to "Weather & environment" (v1.17.0 added five of them)
 - **Every group starts folded**, with **Expand all** / **Collapse all** beside the filter
@@ -451,6 +451,27 @@ Every option below is available in the visual editor — no YAML required.
 - Shows stars, downloads, age and a two-line description per item
 - Single-item dismiss button on every row
 - **Show hidden (n)** reveals country-hidden items with the matched term and field, plus a **Restore** button
+
+#### Keeping HACS’s New list in step (v1.17.2)
+
+Dismissing an item here also clears its **New** status in HACS. Items automatically
+hidden for another country are cleared there too. This changes only review status:
+nothing is installed, removed, or hidden from HACS search.
+
+After upgrading, the next scan catches up items you already dismissed or country-hidden.
+You do not need to review them again. Items still waiting for your review stay untouched.
+HACS includes categories this card does not monitor, so its overall count can still differ.
+
+**Restore** explicitly brings an eligible item back to both lists, even when it was first
+seen more than 30 days ago. Country-hidden items remain in **Show hidden**, with their
+reason and Restore available after syncing and restarting. Original first-seen dates
+never reset. A restored item is not automatically hidden again.
+
+If HACS is still starting, disabled, or cannot save, your decision is saved here and syncing
+retries on the next scan. The sensor’s `hacs_sync_pending` and `hacs_sync_last_error`
+attributes show work waiting and the last problem. Switching off new-item review stops
+syncing; switching off country filtering stops new automatic country clears. Neither
+switch silently marks previously reviewed HACS items New again—use Restore for that.
 
 #### Where the names come from
 
@@ -527,7 +548,7 @@ restored by hand stays visible.
 
 #### Services
 
-**`custom_component_monitor.dismiss_new_items`** — Permanently hide reviewed items from this card. Give **exactly one** of `repositories`, `category` or `all`.
+**`custom_component_monitor.dismiss_new_items`** — Hide reviewed items from this card and clear their **New** status in HACS. Give **exactly one** of `repositories`, `category` or `all`.
 
 | Parameter | Required | Type | Description |
 |-----------|----------|------|-------------|
@@ -535,7 +556,7 @@ restored by hand stays visible.
 | `category` | One of | string | Dismiss every currently-shown new item in this category group (e.g. "Climate & heating") |
 | `all` | One of | boolean | Dismiss every currently-shown new item |
 
-**`custom_component_monitor.restore_new_items`** — Bring back items previously dismissed or auto-hidden. An item restored from auto-hide is also marked "never hide again", so the country rule can't hide it a second time. Give **exactly one** of `repositories`, `category` or `all`.
+**`custom_component_monitor.restore_new_items`** — Bring back items previously dismissed or auto-hidden **in both this card and HACS’s New listing**, unless already installed or no longer available. An item restored from auto-hide is also marked "never hide again", so the country rule can't hide it a second time. Give **exactly one** of `repositories`, `category` or `all`.
 
 | Parameter | Required | Type | Description |
 |-----------|----------|------|-------------|

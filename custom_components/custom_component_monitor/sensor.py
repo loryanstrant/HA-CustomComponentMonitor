@@ -104,6 +104,7 @@ from .const import (
     SENSOR_UNUSED_THEMES,
 )
 from .countries import CountryVerdict, classify, scope_is_foreign
+from .hacs_sync import async_sync_hacs_new
 from .install_dates import InstallDateRegistry
 from .new_items import NewItemRegistry, display_name_for
 
@@ -1533,12 +1534,21 @@ class ComponentScanner:
             else:
                 first_seen_iso = registry.first_seen(full_name)
                 if first_seen_iso is None:
-                    # Neither HACS nor our own registry has ever called this
-                    # one new — it is simply an uninstalled repository.
-                    continue
+                    if registry.is_dismissed(full_name) or registry.hidden_record(full_name):
+                        # Old registry size limits could trim first-seen while
+                        # keeping a review decision. Seed only these known,
+                        # uninstalled repos—not every old HACS repository.
+                        first_seen_iso = registry.note_seen(full_name, now=now_utc)
+                    else:
+                        continue
 
             age_days = registry.age_days(full_name, now=now_utc)
-            if not is_new_flag and age_days > NEW_ITEMS_WINDOW_DAYS:
+            if (
+                not is_new_flag and age_days > NEW_ITEMS_WINDOW_DAYS
+                and not registry.is_dismissed(full_name)
+                and registry.hidden_record(full_name) is None
+                and not registry.is_restored(full_name)
+            ):
                 continue
 
             name = display_name_for(full_name, repo)
@@ -1583,7 +1593,11 @@ class ComponentScanner:
                 dismissed_count += 1
                 continue
 
-            if not auto_hide_foreign or registry.is_never_hide(full_name):
+            if (
+                not auto_hide_foreign or registry.is_never_hide(full_name)
+                or registry.is_restored(full_name)
+            ):
+                registry.clear_hidden(full_name)
                 visible.append(item)
                 continue
 
@@ -1753,6 +1767,10 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.new_items_ai_last_run: str | None = None
         self._new_items_ai_last_error: str | None = None
         self._new_items_ai_lock = asyncio.Lock()
+        # Scan decisions, manual actions and AI result application share this
+        # lock. Never hold it while waiting for an AI response or refreshing.
+        self.new_items_review_lock = asyncio.Lock()
+        self.hacs_sync_last_error: str | None = None
         self._new_items_ai_task: asyncio.Task | None = None
         # Adaptive pacing (v1.15.1). The wave size is how many items go to the
         # AI at once; it tunes itself against observed throughput, so the same
@@ -1906,15 +1924,16 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             new_settings = self._new_items_settings()
             new_items: dict[str, Any] | None = None
             if new_settings["scan_enabled"]:
-                await self.new_items_registry.async_load()
-                new_items = await self.scanner.scan_new_items(
-                    self.new_items_registry,
-                    home_country=new_settings["home_country"],
-                    extra_home_terms=new_settings["extra_home_terms"],
-                    auto_hide_foreign=new_settings["auto_hide_foreign"],
-                )
-                self.new_items_registry.prune(new_items.pop("known_full_names", set()))
-                await self.new_items_registry.async_save()
+                async with self.new_items_review_lock:
+                    await self.new_items_registry.async_load()
+                    new_items = await self.scanner.scan_new_items(
+                        self.new_items_registry,
+                        home_country=new_settings["home_country"],
+                        extra_home_terms=new_settings["extra_home_terms"],
+                        auto_hide_foreign=new_settings["auto_hide_foreign"],
+                    )
+                    self.new_items_registry.prune(new_items.pop("known_full_names", set()))
+                    await self.async_sync_new_items_hacs(new_items)
 
             data = {
                 "all_components": all_components,
@@ -1939,6 +1958,45 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if new_items and any(item.get("ai_pending") for item in new_items.get("items", [])):
             self._schedule_new_items_ai_run()
         return data
+
+    async def async_sync_new_items_hacs(self, new_items: dict[str, Any]) -> None:
+        """Reconcile the full rejected set, including pre-upgrade dismissals.
+
+        Caller holds new_items_review_lock. The lists here are the uncapped
+        coordinator lists, not the sensor's published subset. Explicit
+        restores queue True; ordinary visible items never do.
+        """
+        registry = self.new_items_registry
+        settings = self._new_items_settings()
+        if not settings["scan_enabled"]:
+            await registry.async_save()
+            return
+        rejected = set(registry.dismissed_keys)
+        if settings["auto_hide_foreign"]:
+            rejected.update(
+                item["full_name"].strip().lower()
+                for item in new_items.get("hidden", [])
+                if not registry.is_restored(item["full_name"])
+                and not registry.is_never_hide(item["full_name"])
+            )
+        for key in rejected:
+            registry.queue_hacs_new(key, False)
+        # Cancel outdated automatic hides, not pending explicit restores.
+        pending = registry.hacs_pending
+        registry.acknowledge_hacs(
+            [key for key, new in pending.items() if not new and key not in rejected], pending
+        )
+        await registry.async_save()  # durable intent before touching HACS
+        desired = registry.hacs_pending
+        result = await async_sync_hacs_new(self.hass, desired)
+        if result.error and result.error != self.hacs_sync_last_error:
+            _LOGGER.warning("%s", result.error)
+        self.hacs_sync_last_error = result.error
+        if result.completed:
+            registry.acknowledge_hacs(result.completed, desired)
+            await registry.async_save()
+        if result.changed:
+            _LOGGER.info("Synced New status for %d HACS repositories", result.changed)
 
     # -- AI summarise & categorise updates (#67) ----------------------------
 
@@ -2858,12 +2916,13 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.data:
             return 0
         async with self._new_items_ai_lock:
-            items = (self.data.get("new_items") or {}).get("items") or []
-            for item in items:
-                item["ai_pending"] = True
-                self.new_items_registry.clear_ai(item["full_name"])
-            await self.new_items_registry.async_save()
-            return len(items)
+            async with self.new_items_review_lock:
+                items = (self.data.get("new_items") or {}).get("items") or []
+                for item in items:
+                    item["ai_pending"] = True
+                    self.new_items_registry.clear_ai(item["full_name"])
+                await self.new_items_registry.async_save()
+                return len(items)
 
     def async_schedule_new_items_ai_run(self) -> None:
         """Public entry point for the catch-up chain (used by the service)."""
@@ -2992,6 +3051,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if (
             settings["auto_hide_foreign"]
             and not self.new_items_registry.is_never_hide(full_name)
+            and not self.new_items_registry.is_restored(full_name)
             and ai_scope_hides(
                 item,
                 result["country_scope"],
@@ -3054,6 +3114,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return counts
 
         settings = self._new_items_settings()
+        if not settings["scan_enabled"]:
+            return counts
         budget = (
             settings["ai_budget_seconds"] if max_seconds is None else float(max_seconds)
         )
@@ -3096,20 +3158,32 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     elapsed = time.monotonic() - wave_started
 
                     ok = 0
-                    for item, result in zip(wave, results):
-                        if result is None:
-                            counts["failed"] += 1
-                            continue
-                        ok += 1
-                        counts["generated"] += 1
-                        self._apply_new_item_ai_result(
-                            item,
-                            result,
-                            items=items,
-                            new_items=new_items,
-                            settings=settings,
-                            ai_entity=ai_entity,
-                        )
+                    async with self.new_items_review_lock:
+                        for item, result in zip(wave, results):
+                            if result is None:
+                                counts["failed"] += 1
+                                continue
+                            ok += 1
+                            # A scan or dismissal can replace/remove this row
+                            # while its AI response is in flight. Do not apply
+                            # stale work to the new review decision.
+                            current = (self.data or {}).get("new_items")
+                            if (
+                                current is not new_items
+                                or self.new_items_registry.is_dismissed(item["full_name"])
+                            ):
+                                counts["skipped"] += 1
+                                continue
+                            counts["generated"] += 1
+                            self._apply_new_item_ai_result(
+                                item,
+                                result,
+                                items=items,
+                                new_items=new_items,
+                                settings=self._new_items_settings(),
+                                ai_entity=ai_entity,
+                            )
+                        await self.async_sync_new_items_hacs(new_items)
 
                     self._record_new_items_ai_rate(len(wave), ok, elapsed)
                     self._adapt_new_items_ai_wave(len(wave), ok, elapsed)
@@ -3137,7 +3211,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 self.new_items_ai_in_progress = was_in_progress
                 self.new_items_ai_last_run = dt_util.utcnow().isoformat()
-                await self.new_items_registry.async_save()
+                async with self.new_items_review_lock:
+                    await self.new_items_registry.async_save()
                 self.async_update_listeners()
 
         return counts
@@ -3604,6 +3679,8 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             ATTR_HIDDEN_TRUNCATED: len(all_hidden) - len(hidden),
             ATTR_DISMISSED_COUNT: data.get("dismissed_count", 0),
             ATTR_TOTAL_NEW: data.get("total_new", 0),
+            "hacs_sync_pending": len(self.coordinator.new_items_registry.hacs_pending),
+            "hacs_sync_last_error": self.coordinator.hacs_sync_last_error,
             ATTR_HOME_COUNTRY: (self.coordinator.data or {}).get(
                 "new_items_home_country"
             ),

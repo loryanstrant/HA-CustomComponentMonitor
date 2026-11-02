@@ -333,6 +333,9 @@ class NewItemRegistry:
         self._auto_hidden: dict[str, dict[str, Any]] = {}
         self._never_hide: set[str] = set()
         self._ai: dict[str, dict[str, Any]] = {}
+        # Additive v1 fields: old installations need no destructive migration.
+        self._restored: dict[str, str] = {}
+        self._hacs_pending: dict[str, bool] = {}
 
     # -- loading / saving -----------------------------------------------------
 
@@ -362,6 +365,12 @@ class NewItemRegistry:
         self._auto_hidden = _clean_auto_hidden(raw.get("auto_hidden"))
         self._never_hide = _clean_never_hide(raw.get("never_hide"))
         self._ai = _clean_ai(raw.get("ai"))
+        self._restored = _clean_dismissed(raw.get("restored"))
+        pending = raw.get("hacs_pending")
+        self._hacs_pending = {
+            item_key(key): value for key, value in pending.items()
+            if item_key(key) and isinstance(value, bool)
+        } if isinstance(pending, dict) else {}
         self._loaded = True
         self._dirty = False
 
@@ -380,6 +389,8 @@ class NewItemRegistry:
             "auto_hidden": self._auto_hidden,
             "never_hide": sorted(self._never_hide),
             "ai": self._ai,
+            "restored": self._restored,
+            "hacs_pending": self._hacs_pending,
         }
 
     # -- first-seen ------------------------------------------------------------
@@ -431,6 +442,10 @@ class NewItemRegistry:
         if key in self._dismissed:
             return False
         self._dismissed[key] = _now_utc(now).isoformat()
+        if self.first_seen(full_name) is None:
+            self.note_seen(full_name, now=now)
+        self._restored.pop(key, None)
+        self.queue_hacs_new(key, False)
         self._dirty = True
         return True
 
@@ -453,6 +468,10 @@ class NewItemRegistry:
             self._never_hide.add(key)
             changed = True
         if changed:
+            if self.first_seen(full_name) is None:
+                self.note_seen(full_name)
+            self._restored[key] = _now_utc(None).isoformat()
+            self.queue_hacs_new(key, True)
             self._dirty = True
         return changed
 
@@ -471,6 +490,29 @@ class NewItemRegistry:
         behind its back.
         """
         return frozenset(self._dismissed)
+
+    def is_restored(self, full_name: str) -> bool:
+        """Explicitly restored items remain reviewable beyond the new-item window."""
+        return item_key(full_name) in self._restored
+
+    def queue_hacs_new(self, full_name: str, new: bool) -> None:
+        """Latest decision wins, including a restore overtaking a pending clear."""
+        key = item_key(full_name)
+        if key and self._hacs_pending.get(key) is not new:
+            self._hacs_pending[key] = new
+            self._dirty = True
+
+    @property
+    def hacs_pending(self) -> dict[str, bool]:
+        """A copy so an awaited batch cannot mutate the registry behind our back."""
+        return dict(self._hacs_pending)
+
+    def acknowledge_hacs(self, completed: Iterable[str], desired: dict[str, bool]) -> None:
+        """Remove only completed operations still matching the attempted decision."""
+        for key in completed:
+            if key in self._hacs_pending and self._hacs_pending[key] == desired[key]:
+                del self._hacs_pending[key]
+                self._dirty = True
 
     # -- auto-hide audit ----------------------------------------------------------
 
@@ -494,6 +536,8 @@ class NewItemRegistry:
         either way.
         """
         key = item_key(full_name)
+        self._restored.pop(key, None)
+        self.queue_hacs_new(key, False)
         self._auto_hidden[key] = {
             "country": country,
             "term": term,
@@ -507,6 +551,10 @@ class NewItemRegistry:
         """Drop the auto-hide record for *full_name*, if any."""
         key = item_key(full_name)
         if self._auto_hidden.pop(key, None) is not None:
+            # An automatic rule change is not an explicit Restore. Cancel an
+            # uncommitted hide, but never set HACS's flag back to New here.
+            if self._hacs_pending.get(key) is False and not self.is_dismissed(key):
+                del self._hacs_pending[key]
             self._dirty = True
 
     def hidden_record(self, full_name: str) -> dict[str, Any] | None:
@@ -615,7 +663,10 @@ class NewItemRegistry:
 
         candidates = set(self._seen) | set(self._auto_hidden) | set(self._ai)
         for key in candidates:
-            if key in known_keys or key in self._dismissed or key in self._never_hide:
+            if (
+                key in known_keys or key in self._dismissed
+                or key in self._never_hide or key in self._restored
+            ):
                 continue
             last_present = (
                 _parse((self._seen.get(key) or {}).get("last_present"))
@@ -640,6 +691,7 @@ class NewItemRegistry:
                 (key, record)
                 for key, record in self._seen.items()
                 if key not in self._dismissed and key not in self._never_hide
+                and key not in self._auto_hidden and key not in self._restored
             ]
             prunable.sort(key=lambda kv: str(kv[1].get("first_seen") or ""))
             excess = len(self._seen) - NEW_ITEMS_MAX_ENTRIES
