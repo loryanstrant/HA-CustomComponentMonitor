@@ -83,6 +83,7 @@ from .const import (
     NEW_ITEM_CATEGORY_DEFINITIONS,
     NEW_ITEM_CATEGORY_FALLBACK,
     NEW_ITEM_CATEGORY_OPTIONS,
+    NEW_ITEM_HACS_KINDS,
     NEW_ITEMS_AI_CATCHUP_SECONDS,
     NEW_ITEMS_AI_CONCURRENCY_MAX,
     NEW_ITEMS_AI_CONCURRENCY_START,
@@ -1489,9 +1490,9 @@ class ComponentScanner:
         window clause — otherwise every repository HACS has ever indexed
         would eventually become "new" forever.
 
-        Only ``integration`` (-> ``"integration"``) and ``plugin``
-        (-> ``"card"``) categories are considered; themes and anything else
-        are out of scope for this card. The country pre-filter runs before
+        Integrations, plugins (-> "card"), themes and templates are
+        considered. Unsupported categories are left alone. The country
+        pre-filter runs before
         anything is handed to the AI — see
         ``docs/specs/new-in-hacs.md``. AI categorisation itself is a
         separate, batched pass
@@ -1522,12 +1523,8 @@ class ComponentScanner:
             if not full_name or repo.get("installed", False):
                 continue
 
-            category = repo.get("category", "")
-            if category == "integration":
-                kind = "integration"
-            elif category == "plugin":
-                kind = "card"
-            else:
+            kind = NEW_ITEM_HACS_KINDS.get(repo.get("category", ""))
+            if kind is None:
                 continue
 
             is_new_flag = bool(repo.get("new"))
@@ -1577,9 +1574,8 @@ class ComponentScanner:
                     "first_seen": first_seen_iso,
                     "age_days": age_days,
                     "category": (
-                        ai_record["category"]
-                        if ai_record
-                        else NEW_ITEM_CATEGORY_FALLBACK
+                        "Dashboard & theming" if kind == "theme"
+                        else ai_record["category"] if ai_record else NEW_ITEM_CATEGORY_FALLBACK
                     ),
                     "ai_pending": ai_record is None,
                 }
@@ -1726,10 +1722,15 @@ def card_category_override(kind: Any, category: str) -> str:
     frontend, which is a better answer than 'Other' and the one a reader
     expects. Measured on the production store: ~15 of 58 'Other' items.
 
-    Only ever promotes the fallback. A card the AI placed somewhere specific
-    ("Energy & solar" for a power-flow card) keeps that category, because the
-    subject is more useful than the medium.
+    For cards, only promotes the fallback. A card the AI placed somewhere
+    specific ("Energy & solar" for a power-flow card) keeps that category,
+    because the subject is more useful than the medium. Themes always map
+    to Dashboard & theming; templates keep their subject category.
     """
+    # A theme's job is appearance, even if its name mentions weather/energy.
+    # Templates have no medium-based override: group by their subject.
+    if str(kind or "").strip().lower() == "theme":
+        return "Dashboard & theming"
     if category != NEW_ITEM_CATEGORY_FALLBACK:
         return category
     if str(kind or "").strip().lower() != "card":

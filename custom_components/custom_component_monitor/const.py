@@ -152,6 +152,13 @@ RIU_CARD_BASE_PATH = f"/local/{DOMAIN}/{RIU_CARD_JS}"
 # snapshot. Every existing scanner here filters on ``installed``; this one
 # deliberately does the opposite, so the card can triage what has just arrived
 # in the store rather than what is already on disk.
+# Same allow-list for discovery and targeted HACS review syncing.
+NEW_ITEM_HACS_KINDS = {
+    "integration": "integration",
+    "plugin": "card",
+    "theme": "theme",
+    "template": "template",
+}
 SENSOR_NEW_ITEMS = "new_items"
 NEW_ITEMS_CARD_JS = "hacs-new-items-card.js"
 NEW_ITEMS_CARD_BASE_PATH = f"/local/{DOMAIN}/{NEW_ITEMS_CARD_JS}"

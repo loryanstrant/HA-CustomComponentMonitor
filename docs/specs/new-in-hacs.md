@@ -330,3 +330,29 @@ and later retry; stale AI result versus dismissal/restore; disabled options; ful
 sync beyond 300/100 published rows; unchanged unreviewed flags. Covered by
 `test_hacs_sync.py` and the scanner/registry/service tests. Production activation and
 release-install verification remain separate approvals/verification stages.
+
+
+## Addendum — 1.17.4: themes and templates
+
+Approved 3 November 2026: include new, uninstalled themes and templates in the same
+review-and-dismiss flow. This supersedes the original two-kind limit, not the
+installed-repository usage scanners. The existing chip row and editor offer All /
+Integrations / Cards / Themes / Templates; count and filtered bulk actions remain
+scoped to the rows shown. Themes belong to Dashboard & theming immediately and
+after categorisation; templates use the existing subject groups.
+
+Both kinds use the existing country matcher, AI queue/cache, saved dismissals,
+HACS New synchronization, audit view and explicit Restore. Unsupported categories,
+installed items and old never-new/never-seen repositories stay untouched. Original
+first-seen dates, lifetime exemptions and saved intent are preserved.
+
+Verification: real scanner and HA service tests cover dismiss/country-hide, HACS
+writer persistence, Restore and registry reload for both kinds; selection tests
+exclude installed/old/unsupported rows. Browser checks exercise the real changed
+card at desktop and 380 px, type counts, scoped bulk dismiss, Restore, no-match
+and editor options. Existing newest/stars/downloads sorting and kind filters are
+retained; adding free-text search or runtime sort controls is outside this minimal
+approved layout. No separate mobile app exists; Lovelace supplies phone parity.
+
+The approved static preview is kept beside this spec as
+`themes-templates-preview/`, with its desktop and phone images.

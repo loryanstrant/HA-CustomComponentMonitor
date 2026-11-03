@@ -67,15 +67,15 @@ async def test_targeted_clear_one_write_and_unrelated_snapshot_unchanged(hass):
 
 
 async def test_already_clear_unknown_installed_and_wrong_category_are_noops(hass):
-    hacs, repos, _ = make_hacs(hass, ["owner/clear", "owner/installed", "owner/theme"], installed=["owner/installed"])
+    hacs, repos, _ = make_hacs(hass, ["owner/clear", "owner/installed", "owner/unsupported"], installed=["owner/installed"])
     repos["owner/clear"].data.new = False
-    repos["owner/theme"].data.category = "theme"
+    repos["owner/unsupported"].data.category = "python_script"
     result = await async_sync_hacs_new(hass, {name: False for name in [*repos, "missing/repo"]})
     assert result.changed == 0
     assert result.completed == {*repos, "missing/repo"}
     hacs.data.async_write.assert_not_awaited()
     assert repos["owner/installed"].data.new is True
-    assert repos["owner/theme"].data.new is True
+    assert repos["owner/unsupported"].data.new is True
 
 
 @pytest.mark.parametrize("condition", ["missing", "incompatible", "disabled", "starting"])

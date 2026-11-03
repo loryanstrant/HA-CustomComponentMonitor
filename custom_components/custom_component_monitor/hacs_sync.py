@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from homeassistant.core import HomeAssistant
 
+from .const import NEW_ITEM_HACS_KINDS
 from .new_items import item_key
 
 
@@ -27,7 +28,7 @@ class HacsSyncResult:
 async def async_sync_hacs_new(
     hass: HomeAssistant, desired: Mapping[str, bool]
 ) -> HacsSyncResult:
-    """Set only selected, uninstalled integration/plugin repositories' flags.
+    """Set only selected, uninstalled supported repositories' New flags.
 
     Callers serialize monitor decisions and this operation with their own
     lock. Missing/installed targets are safe no-ops, not arbitrary new repos
@@ -64,9 +65,7 @@ async def async_sync_hacs_new(
                 or not isinstance(getattr(data, "new", None), bool)
             ):
                 raise ValueError("HACS repository identity or New flag does not match the expected contract")
-            if getattr(data, "installed", False) or getattr(data, "category", None) not in (
-                "integration", "plugin"
-            ):
+            if getattr(data, "installed", False) or getattr(data, "category", None) not in NEW_ITEM_HACS_KINDS:
                 result.completed.add(key)
                 continue
             if data.new != new:
