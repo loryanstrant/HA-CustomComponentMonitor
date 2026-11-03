@@ -1,12 +1,12 @@
 /**
  * HACS New Items Card
- * Reviews newly-flagged HACS integrations and cards: a type filter, AI
+ * Reviews newly-flagged HACS integrations, cards, themes and templates: a type filter, AI
  * category groups (alphabetical, "Other" pinned last, all collapsed by
  * default with an Expand all / Collapse all toggle), tick-and-dismiss,
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.17.3";
+const CARD_VERSION = "1.17.4";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -70,6 +70,8 @@ function hniHacsInstallPath(item) {
   const params = new URLSearchParams({ owner, repository });
   const category = item.kind === "card" ? "plugin"
     : item.kind === "integration" ? "integration"
+    : item.kind === "theme" ? "theme"
+    : item.kind === "template" ? "template"
     : "";
   if (category) params.set("category", category);
   return "/hacs/repository?" + params.toString();
@@ -170,6 +172,8 @@ const HNI_EDITOR_SCHEMA = [
       { value: "all", label: "All types" },
       { value: "integration", label: "Integrations" },
       { value: "card", label: "Cards" },
+      { value: "theme", label: "Themes" },
+      { value: "template", label: "Templates" },
     ] } },
   },
   {
@@ -287,7 +291,7 @@ class HacsNewItemsCard extends HTMLElement {
     this._els = null;
     this._lastHash = "";
     this._lastSensorSnapshot = null;
-    this._typeFilter = "all"; // runtime type filter: all | integration | card
+    this._typeFilter = "all"; // runtime type filter: all | integration | card | theme | template
     this._expanded = {}; // category -> bool, defaulted the first time it's seen
     this._groupKeys = {}; // category -> the keys "Dismiss all (n)" counted
     this._selected = new Set(); // ticked full_name keys
@@ -835,13 +839,15 @@ class HacsNewItemsCard extends HTMLElement {
   }
 
   _filtersHtml(items, orderedCats) {
-    const counts = { all: items.length, integration: 0, card: 0 };
+    const counts = { all: items.length, integration: 0, card: 0, theme: 0, template: 0 };
     for (const it of items) {
       if (it.kind === "integration") counts.integration++;
       else if (it.kind === "card") counts.card++;
+      else if (it.kind === "theme") counts.theme++;
+      else if (it.kind === "template") counts.template++;
     }
     const chip = (key, label, n) =>
-      '<button type="button" class="chip' + (this._typeFilter === key ? " active" : "") + '" data-filter="' + key + '">' +
+      '<button type="button" class="chip' + (this._typeFilter === key ? " active" : "") + '" data-filter="' + key + '" aria-pressed="' + (this._typeFilter === key ? "true" : "false") + '">' +
       hniEscapeHtml(label) + ' <span class="chip-count">' + n + "</span></button>";
     /* Expand all / Collapse all. Every group now starts folded, so without
        this the only way to see the whole drop is ten to twelve taps. One
@@ -861,6 +867,8 @@ class HacsNewItemsCard extends HTMLElement {
       chip("all", "All", counts.all) +
       chip("integration", "Integrations", counts.integration) +
       chip("card", "Cards", counts.card) +
+      chip("theme", "Themes", counts.theme) +
+      chip("template", "Templates", counts.template) +
       toggle
     );
   }
@@ -902,6 +910,8 @@ class HacsNewItemsCard extends HTMLElement {
     const name = hniEscapeHtml(item.name || item.full_name || "Unknown");
     const kindLabel = item.kind === "integration" ? "Integration"
       : item.kind === "card" ? "Card"
+      : item.kind === "theme" ? "Theme"
+      : item.kind === "template" ? "Template"
       : hniEscapeHtml(item.kind || "");
 
     const metaParts = [item.stars == null ? "★ —" : "★ " + hniFormatNumber(item.stars)];
@@ -1001,8 +1011,8 @@ class HacsNewItemsCard extends HTMLElement {
       ".chip.active { background:var(--primary-color, #03a9f4); color:#fff; border-color:var(--primary-color, #03a9f4); }",
       ".chip-count { font-size:0.85em; opacity:0.85; }",
       /* Expand all / Collapse all sits at the far end of the same row: it
-         filters nothing, so butting it up against the three kind chips would
-         read as a fourth filter. It never takes .active - it has no "on". */
+         filters nothing, so butting it up against the kind chips would
+         read as another filter. It never takes .active - it has no "on". */
       ".chip-toggle { margin-left:auto; }",
       /* Selection bar */
       ".selection-bar { display:none; align-items:center; justify-content:space-between; gap:10px; background:rgba(var(--rgb-primary-color, 3,169,244), 0.08); border:1px solid rgba(var(--rgb-primary-color, 3,169,244), 0.2); border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:0.85em; font-weight:500; color:var(--hni-primary); }",
@@ -1077,7 +1087,7 @@ class HacsNewItemsCard extends HTMLElement {
       ".restore-btn { background:none; border:none; color:var(--hni-accent); font-size:0.8em; font-weight:500; cursor:pointer; white-space:nowrap; flex-shrink:0; font-family:inherit; padding:4px 8px; }",
       ".audit-note { padding:8px 0 0; font-size:0.76em; color:var(--hni-secondary); font-style:italic; }",
       /* ~380px: kind chip + meta wrap under the name, Expand all drops onto
-         its own row under the three kind chips rather than squeezing them,
+         its own row under the kind chips rather than squeezing them,
          group's Dismiss all goes full-width below the group title, action
          buttons go full-width. */
       "@media (max-width: 380px) {",
@@ -1111,6 +1121,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "hacs-new-items-card",
   name: "HACS New Items",
-  description: "Review newly-flagged HACS integrations and cards, grouped and dismissable.",
+  description: "Review new HACS integrations, cards, themes and templates, grouped and dismissable.",
   preview: true,
 });

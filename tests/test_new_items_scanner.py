@@ -228,13 +228,13 @@ async def test_a_new_plugin_maps_to_kind_card(
     assert item["kind"] == "card"
 
 
-async def test_a_new_theme_is_excluded_entirely(
+async def test_a_new_theme_is_visible_in_dashboard_and_theming(
     hass: HomeAssistant, registry: NewItemRegistry
 ):
     result = await run_scan(hass, registry)
-
-    all_entries = result["items"] + result["hidden"]
-    assert by_full_name(all_entries, NEW_THEME) is None
+    item = by_full_name(result["items"], NEW_THEME)
+    assert item["kind"] == "theme"
+    assert item["category"] == "Dashboard & theming"
 
 
 async def test_an_installed_item_flagged_new_is_excluded(
@@ -617,12 +617,12 @@ async def test_total_new_counts_everything_including_hidden_and_dismissed(
 
     result = await run_scan(hass, registry)
 
-    # 6 candidates flagged new=True this cycle: integration, plugin, foreign,
-    # au/nz, sparse, dismissed -- NOT the theme (wrong kind), the installed
-    # one, or the two first-seen-window items (which need to be pre-seeded
+    # 7 candidates flagged new=True this cycle: integration, plugin, theme,
+    # foreign, au/nz, sparse, dismissed -- NOT the installed one,
+    # or the two first-seen-window items (which need to be pre-seeded
     # via note_seen() to appear at all, since new=False here; see the
     # dedicated first-seen-window tests), or the never-new/never-seen one.
-    assert result["total_new"] == 6
+    assert result["total_new"] == 7
     assert len(result["items"]) + len(result["hidden"]) + result["dismissed_count"] == (
         result["total_new"]
     )
@@ -635,7 +635,7 @@ async def test_total_new_also_counts_a_seeded_first_seen_window_item(
 
     result = await run_scan(hass, registry)
 
-    assert result["total_new"] == 7  # the usual 6 plus the seeded one
+    assert result["total_new"] == 8  # the usual 7 plus the seeded one
 
 
 def test_by_category_counts_only_visible_items():

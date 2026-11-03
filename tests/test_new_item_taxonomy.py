@@ -155,7 +155,7 @@ def test_an_integration_that_came_back_other_stays_other() -> None:
     )
 
 
-@pytest.mark.parametrize("kind", [None, "", "  ", "theme", "plugin"])
+@pytest.mark.parametrize("kind", [None, "", "  ", "template", "plugin"])
 def test_an_unknown_kind_is_not_assumed_to_be_a_card(kind) -> None:
     """Only HACS's literal "card" counts; "plugin" is HACS's *URL* word."""
     assert (
@@ -321,3 +321,12 @@ async def test_the_prompt_offers_the_catalogue_and_refuses_other_as_an_escape(
     assert prompt.index(NEW_ITEM_CATEGORY_CATALOGUE) < prompt.index("Some Light Thing")
     assert "only when nothing else fits" not in prompt
     assert "not about a home" in prompt
+
+
+@pytest.mark.parametrize("category", [NEW_ITEM_CATEGORY_FALLBACK, "Weather & environment"])
+def test_themes_always_belong_to_dashboard_and_theming(category):
+    assert card_category_override("theme", category) == DASHBOARD
+
+
+def test_templates_keep_their_subject_category():
+    assert card_category_override("template", "Energy & solar") == "Energy & solar"

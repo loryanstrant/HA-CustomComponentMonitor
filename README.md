@@ -403,7 +403,7 @@ same value as the `install_dates_since` attribute.
 
 ### New in HACS card
 
-HACS adds new integrations and cards to its store in bulk. This card surfaces the genuinely new ones: it hides items flagged for another country (with an always-available audit list to review them), groups the remainder by what they do, and lets you dismiss entire categories in one tap.
+HACS adds new integrations, cards, themes and templates to its store in bulk. This card surfaces the genuinely new ones: it hides items flagged for another country (with an always-available audit list to review them), groups the remainder by what they do, and lets you dismiss entire categories in one tap.
 
 #### Via UI
 
@@ -428,7 +428,7 @@ Every option below is available in the visual editor — no YAML required.
 |--------|------|---------|-------------|
 | `entity` | string | `sensor.hacs_new_items` | The sensor entity to read |
 | `title` | string | `New in HACS` | Card title. Leave it blank in the editor to follow the default |
-| `kind_filter` | string | `all` | Which kinds of item to show initially: `all`, `integration`, or `card` |
+| `kind_filter` | string | `all` | Which kinds of item to show initially: `all`, `integration`, `card`, `theme`, or `template` |
 | `sort` | string | `newest` | Default sort order within each group: `newest`, `stars`, or `downloads` |
 | `show_hidden` | boolean | `false` | Start with the hidden (country-filtered) items expanded |
 | `max_items_per_group` | number | `0` | Maximum items per category group (0 = all) |
@@ -441,7 +441,8 @@ Every option below is available in the visual editor — no YAML required.
   "Automation & scheduling" to "Weather & environment" (v1.17.0 added five of them)
 - **Every group starts folded**, with **Expand all** / **Collapse all** beside the filter
   chips (v1.17.0+)
-- Filter chips for All / Integrations / Cards
+- Filter chips for All / Integrations / Cards / Themes / Templates (v1.17.4+)
+- Themes appear under **Dashboard & theming**; templates use the existing groups based on their subject
 - **Dismiss all (n)** button per group — it asks for confirmation first — or tick individual
   items and **Dismiss N selected**
 - Shows each item's display name, not its repository slug — the same name the HACS panel
@@ -462,7 +463,8 @@ nothing is installed, removed, or hidden from HACS search.
 
 After upgrading, the next scan catches up items you already dismissed or country-hidden.
 You do not need to review them again. Items still waiting for your review stay untouched.
-HACS includes categories this card does not monitor, so its overall count can still differ.
+From v1.17.4, integrations, cards, themes and templates all use this same review flow.
+Installed items and unsupported HACS categories remain outside it, so counts can still differ.
 
 **Restore** explicitly brings an eligible item back to both lists, even when it was first
 seen more than 30 days ago. Country-hidden items remain in **Show hidden**, with their

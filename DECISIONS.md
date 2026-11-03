@@ -549,3 +549,20 @@ Automatic country-rule changes never re-mark items New; explicit Restore does.
 **Lesson:** two interfaces offering the same review action need to share the underlying
 review state. A local filter is not upstream dismissal, and clearing upstream flags also
 changes the lifetime of every reader that formerly relied on those flags.
+
+
+## 2026-11-03 — Themes and templates share the New review flow (1.17.4)
+
+The owner approved including the nine themes and one template left outside the original
+integration/plugin-only scanner. Discovery and HACS review syncing now share one
+`NEW_ITEM_HACS_KINDS` allow-list. The same country matcher, registry, locking, services
+and writer are reused; installed and unknown categories remain excluded.
+
+Themes are always Dashboard & theming, including while AI work is pending and when
+a verdict is applied. Templates retain the existing subject-based groups. No AI cache
+version bump is needed: these two kinds were not previously scanned. The approved
+preview adds type chips and editor options rather than a new screen. All four bundled
+cards stay versioned with the manifest. Installed-repository usage monitoring is unchanged.
+
+**Lesson:** a category expansion must reach both discovery and review synchronization;
+sharing the allow-list avoids a visible item whose dismissal never reaches HACS.
