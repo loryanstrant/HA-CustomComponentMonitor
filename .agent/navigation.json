@@ -5,12 +5,12 @@
     "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
     "default_branch": "main",
     "languages": {
-      "Python": 26,
-      "JavaScript": 4
+      "Python": 29,
+      "JavaScript": 5
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 65
+    "file_count": 77
   },
   "start_here": {
     "readme": "README.md",
@@ -25,7 +25,8 @@
       "pytest.ini"
     ],
     "source_roots": [
-      "custom_components"
+      "custom_components",
+      "docs"
     ]
   },
   "documentation": [
@@ -71,8 +72,13 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 510,
+      "lines": 568,
       "headings": [
+        {
+          "level": 2,
+          "text": "2026-11-03 — Install age is elapsed time, not local wall-clock time",
+          "anchor": "2026-11-03--install-age-is-elapsed-time-not-local-wall-clock-time"
+        },
         {
           "level": 2,
           "text": "2026-08-23 — The card editors are built on ha-form",
@@ -147,13 +153,23 @@
           "level": 2,
           "text": "2026-10-29 — A render-time map that two readers disagree about",
           "anchor": "2026-10-29--a-render-time-map-that-two-readers-disagree-about"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-03 — Review decisions also clear HACS’s New flag",
+          "anchor": "2026-11-03--review-decisions-also-clear-hacss-new-flag"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-03 — Themes and templates share the New review flow (1.17.4)",
+          "anchor": "2026-11-03--themes-and-templates-share-the-new-review-flow-1174"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 716,
+      "lines": 741,
       "headings": [
         {
           "level": 2,
@@ -333,6 +349,67 @@
       ]
     },
     {
+      "path": "docs/release-notes/1.17.2.md",
+      "title": "Dismiss in HACS too — v1.17.2",
+      "lines": 12,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 2,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.17.3.md",
+      "title": "Correct installation ages across clock changes — v1.17.3",
+      "lines": 8,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 2,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.17.4.md",
+      "title": "1.17.4",
+      "lines": 13,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.17.4",
+          "anchor": "whats-new-in-v1174"
+        },
+        {
+          "level": 3,
+          "text": "Added",
+          "anchor": "added"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
       "path": "docs/specs/card-editor-ha-form.md",
       "title": "Spec — Card editors on ha-form",
       "lines": 148,
@@ -377,7 +454,7 @@
     {
       "path": "docs/specs/new-in-hacs.md",
       "title": "Spec — New in HACS: review, auto-filter and bulk-dismiss",
-      "lines": 304,
+      "lines": 358,
       "headings": [
         {
           "level": 2,
@@ -478,8 +555,46 @@
           "level": 2,
           "text": "Addendum — shipped in 1.17.1",
           "anchor": "addendum--shipped-in-1171"
+        },
+        {
+          "level": 2,
+          "text": "Addendum — 1.17.2: dismiss in HACS too",
+          "anchor": "addendum--1172-dismiss-in-hacs-too"
+        },
+        {
+          "level": 2,
+          "text": "Addendum — 1.17.4: themes and templates",
+          "anchor": "addendum--1174-themes-and-templates"
         }
       ]
+    },
+    {
+      "path": "docs/verification/hacs-review-sync-1.17.2.md",
+      "title": "HACS review sync — verification status",
+      "lines": 31,
+      "headings": [
+        {
+          "level": 2,
+          "text": "One review/verification pass — 3 November 2026",
+          "anchor": "one-reviewverification-pass--3-november-2026"
+        },
+        {
+          "level": 2,
+          "text": "Pre-release completion — 3 November 2026",
+          "anchor": "pre-release-completion--3-november-2026"
+        },
+        {
+          "level": 2,
+          "text": "Remaining check",
+          "anchor": "remaining-check"
+        }
+      ]
+    },
+    {
+      "path": "docs/verification/themes-templates-1.17.4.md",
+      "title": "Themes and templates — v1.17.4 verification",
+      "lines": 9,
+      "headings": []
     },
     {
       "path": "info.md",
@@ -516,7 +631,8 @@
   ],
   "code": {
     "source_roots": [
-      "custom_components"
+      "custom_components",
+      "docs"
     ],
     "symbol_source": "repomix (tree-sitter signatures)",
     "routes": [],
@@ -998,6 +1114,12 @@
           },
           {
             "kind": "const",
+            "name": "NEW_ITEM_HACS_KINDS",
+            "parent": "",
+            "signature": "NEW_ITEM_HACS_KINDS ="
+          },
+          {
+            "kind": "const",
             "name": "SENSOR_NEW_ITEMS",
             "parent": "",
             "signature": "SENSOR_NEW_ITEMS = \"new_items\""
@@ -1298,6 +1420,17 @@
         ]
       },
       {
+        "path": "custom_components/custom_component_monitor/hacs_sync.py",
+        "symbols": [
+          {
+            "kind": "class",
+            "name": "HacsSyncResult",
+            "parent": "",
+            "signature": "class HacsSyncResult"
+          }
+        ]
+      },
+      {
         "path": "custom_components/custom_component_monitor/install_dates.py",
         "symbols": [
           {
@@ -1439,6 +1572,30 @@
           },
           {
             "kind": "function",
+            "name": "is_restored",
+            "parent": "NewItemRegistry",
+            "signature": "is_restored(self, full_name: str) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "queue_hacs_new",
+            "parent": "NewItemRegistry",
+            "signature": "queue_hacs_new(self, full_name: str, new: bool) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "hacs_pending",
+            "parent": "NewItemRegistry",
+            "signature": "hacs_pending(self) -> dict[str, bool]"
+          },
+          {
+            "kind": "function",
+            "name": "acknowledge_hacs",
+            "parent": "NewItemRegistry",
+            "signature": "acknowledge_hacs(self, completed: Iterable[str], desired: dict[str, bool]) -> None"
+          },
+          {
+            "kind": "function",
             "name": "is_never_hide",
             "parent": "NewItemRegistry",
             "signature": "is_never_hide(self, full_name: str) -> bool"
@@ -1555,6 +1712,12 @@
             "name": "CustomComponentMonitorCoordinator",
             "parent": "",
             "signature": "class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]])"
+          },
+          {
+            "kind": "function",
+            "name": "async_sync_new_items_hacs",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "async_sync_new_items_hacs(self, new_items: dict[str, Any]) -> None"
           },
           {
             "kind": "function",
@@ -1924,6 +2087,107 @@
             "signature": "const alertClass = (t) =>"
           }
         ]
+      },
+      {
+        "path": "docs/specs/themes-templates-preview/card.js",
+        "symbols": [
+          {
+            "kind": "function",
+            "name": "hniEscapeHtml",
+            "parent": "",
+            "signature": "function hniEscapeHtml(text)"
+          },
+          {
+            "kind": "function",
+            "name": "hniAttr",
+            "parent": "",
+            "signature": "function hniAttr(escapedText)"
+          },
+          {
+            "kind": "function",
+            "name": "hniFormatNumber",
+            "parent": "",
+            "signature": "function hniFormatNumber(n)"
+          },
+          {
+            "kind": "function",
+            "name": "hniFormatAge",
+            "parent": "",
+            "signature": "function hniFormatAge(days)"
+          },
+          {
+            "kind": "function",
+            "name": "hniItemKey",
+            "parent": "",
+            "signature": "function hniItemKey(item)"
+          },
+          {
+            "kind": "function",
+            "name": "hniHacsInstallPath",
+            "parent": "",
+            "signature": "function hniHacsInstallPath(item)"
+          },
+          {
+            "kind": "function",
+            "name": "hniGroupByCategory",
+            "parent": "",
+            "signature": "function hniGroupByCategory(items)"
+          },
+          {
+            "kind": "function",
+            "name": "hniOrderedCategories",
+            "parent": "",
+            "signature": "function hniOrderedCategories(categories)"
+          },
+          {
+            "kind": "const",
+            "name": "isOther",
+            "parent": "",
+            "signature": "const isOther = (c)"
+          },
+          {
+            "kind": "function",
+            "name": "hniSortItems",
+            "parent": "",
+            "signature": "function hniSortItems(items, mode)"
+          },
+          {
+            "kind": "function",
+            "name": "_hniLoadHaComponents",
+            "parent": "",
+            "signature": "function _hniLoadHaComponents()"
+          },
+          {
+            "kind": "function",
+            "name": "_hniPrune",
+            "parent": "",
+            "signature": "function _hniPrune(config)"
+          },
+          {
+            "kind": "class",
+            "name": "HacsNewItemsCardEditor",
+            "parent": "",
+            "signature": "class HacsNewItemsCardEditor extends HTMLElement"
+          },
+          {
+            "kind": "class",
+            "name": "HacsNewItemsCard",
+            "parent": "",
+            "signature": "class HacsNewItemsCard extends HTMLElement"
+          },
+          {
+            "kind": "const",
+            "name": "countClause",
+            "parent": "",
+            "signature": "const countClause = (total, shown, truncated, noun)"
+          },
+          {
+            "kind": "const",
+            "name": "chip",
+            "parent": "",
+            "signature": "const chip = (key, label, n)"
+          }
+        ]
       }
     ]
   },
@@ -1935,6 +2199,7 @@
     "tests/test_categorise_one.py",
     "tests/test_countries.py",
     "tests/test_generate_summaries.py",
+    "tests/test_hacs_sync.py",
     "tests/test_install_dates.py",
     "tests/test_new_item_taxonomy.py",
     "tests/test_new_items_ai_pacing.py",
@@ -1943,6 +2208,7 @@
     "tests/test_new_items_scanner.py",
     "tests/test_new_items_sensor.py",
     "tests/test_new_items_services.py",
+    "tests/test_new_items_types.py",
     "tests/test_scan_install_dates.py",
     "tests/test_scan_updates_reconcile.py",
     "tests/test_setup_and_service.py"
@@ -1959,8 +2225,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "44978ca22df1a105b3cb31b8eb39961620425d01",
-    "content_hash": "fa02580b3f202f43",
+    "source_commit": "db339d7242b2c446dff979a7dc822a9f59f89259",
+    "content_hash": "ce3e6952319f5f18",
     "generator": "navgen"
   }
 }
