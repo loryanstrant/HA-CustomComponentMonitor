@@ -3,6 +3,27 @@
 Dated, non-obvious choices and the quirks that forced them. One entry per
 decision, each ending in a lesson worth carrying elsewhere.
 
+## 2026-11-03 — Install age is elapsed time, not local wall-clock time
+
+Observed in GitHub Validate runs 481 and 482: HACS and Hassfest passed, but
+`test_a_scanner_without_a_registry_still_reports_an_age` returned 8 rather than
+9 days. Run 481 predates v1.17.2; the same commit passed before the November
+US daylight-saving transition. The fallback `_install_info` subtracted two
+local datetimes sharing a timezone, which measures wall-clock time: nine UTC
+days spanning fall-back become eight days and 23 hours locally. Spring-forward
+can overcount instead. The saved install-date registry already compares UTC.
+
+The fallback now uses UTC too. The first twelve deterministic scanner cases
+cover both transitions and an ordinary date across all four scan methods:
+eight transition cases failed before the fix. Twelve further cases guard
+sub-day ages, future dates and unknown dates. After the fix, all 501 tests pass;
+Hassfest reports one integration and zero invalid. No workflow gate or assertion
+was weakened, and the HACS review-sync behaviour is unchanged.
+
+**Lesson:** a failure that appears on an unchanged commit after a clock change
+can be real date arithmetic, not test flakiness. Pin both DST directions in
+regression tests and use UTC when measuring elapsed time.
+
 ## 2026-08-23 — The card editors are built on `ha-form`
 
 All three visual editors were hand-built `innerHTML`, producing browser-default

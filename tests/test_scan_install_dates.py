@@ -7,9 +7,10 @@ missed by that de-duplication.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -192,6 +193,59 @@ async def test_a_scanner_without_a_registry_still_reports_an_age(
     assert entries
     for entry in entries:
         assert entry["days_installed"] == 9
+        assert entry["install_date_estimated"] is True
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["scan_themes", "scan_frontend", "scan_integrations", "scan_all_hacs_components"],
+)
+@pytest.mark.parametrize(
+    ("now_utc", "elapsed", "expected_days"),
+    [
+        # Fall-back removes an hour from local wall-clock subtraction.
+        (datetime(2026, 11, 3, 12, tzinfo=timezone.utc), timedelta(days=9), 9),
+        # Spring-forward must not round an incomplete elapsed day up.
+        (datetime(2026, 3, 10, 12, tzinfo=timezone.utc), timedelta(days=8, hours=23), 8),
+        # The ordinary case still reports the same whole-day age.
+        (datetime(2026, 7, 10, 12, tzinfo=timezone.utc), timedelta(days=9), 9),
+        # Spring-forward cannot turn less than 24 elapsed hours into one day.
+        (datetime(2026, 3, 8, 12, tzinfo=timezone.utc), timedelta(hours=23, minutes=59), 0),
+        # Clock skew and missing filesystem dates retain their old semantics.
+        (datetime(2026, 11, 3, 12, tzinfo=timezone.utc), timedelta(days=-1), 0),
+        (datetime(2026, 11, 3, 12, tzinfo=timezone.utc), None, None),
+    ],
+    ids=["fall-back", "spring-forward", "no-transition", "under-one-day", "future", "unknown"],
+)
+async def test_age_without_a_registry_uses_elapsed_days_across_dst(
+    hass: HomeAssistant,
+    method: str,
+    now_utc: datetime,
+    elapsed: timedelta | None,
+    expected_days: int | None,
+):
+    """A timezone's clock change must not alter the elapsed installation age."""
+    now_local = now_utc.astimezone(ZoneInfo("America/Los_Angeles"))
+    timestamp = (now_utc - elapsed).timestamp() if elapsed is not None else None
+    scanner, patches = build_scanner(hass, None, timestamp)
+    patches.append(
+        patch(
+            "custom_components.custom_component_monitor.sensor.dt_util.now",
+            return_value=now_local,
+        )
+    )
+    for p in patches:
+        p.start()
+    try:
+        result = await getattr(scanner, method)()
+    finally:
+        for p in patches:
+            p.stop()
+
+    entries = result["used"] + result["unused"] if isinstance(result, dict) else result
+    assert entries
+    for entry in entries:
+        assert entry["days_installed"] == expected_days
         assert entry["install_date_estimated"] is True
 
 
