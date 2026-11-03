@@ -395,6 +395,8 @@ that date is written down and **never moves forward again**. An update no longer
   (`~14d ago`). Those estimates are the old, imperfect behaviour — they're now labelled rather
   than presented as fact, and they age out of the window on their own.
 - Items whose install date can't be determined at all are hidden and counted in the footer.
+- Ages measure whole elapsed days, not local clock time. From v1.17.3, the fallback
+  used without a saved date registry also handles daylight-saving changes correctly.
 
 The footer shows when exact tracking began, and `sensor.hacs_installed_components` carries the
 same value as the `install_dates_since` attribute.

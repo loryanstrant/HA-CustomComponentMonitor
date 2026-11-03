@@ -414,8 +414,10 @@ class ComponentScanner:
 
         days = None
         if timestamp is not None:
-            installed_dt = datetime.fromtimestamp(timestamp, tz=now.tzinfo)
-            days = max(0, (now - installed_dt).days)
+            # Compare elapsed time in UTC, just like the install-date registry.
+            # Local wall-clock subtraction adds/removes an hour across DST.
+            installed_dt = datetime.fromtimestamp(timestamp, tz=dt_util.UTC)
+            days = max(0, (dt_util.as_utc(now) - installed_dt).days)
         return InstallInfo(path, days, True)
 
     # -- theme helpers -------------------------------------------------------
