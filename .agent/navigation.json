@@ -5,12 +5,12 @@
     "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
     "default_branch": "main",
     "languages": {
-      "Python": 29,
-      "JavaScript": 5
+      "Python": 31,
+      "JavaScript": 6
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 77
+    "file_count": 91
   },
   "start_here": {
     "readme": "README.md",
@@ -72,7 +72,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 568,
+      "lines": 601,
       "headings": [
         {
           "level": 2,
@@ -163,18 +163,28 @@
           "level": 2,
           "text": "2026-11-03 — Themes and templates share the New review flow (1.17.4)",
           "anchor": "2026-11-03--themes-and-templates-share-the-new-review-flow-1174"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-09 - Follow the active component store, not a retired file (1.18.0)",
+          "anchor": "2026-11-09---follow-the-active-component-store-not-a-retired-file-1180"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 741,
+      "lines": 767,
       "headings": [
         {
           "level": 2,
           "text": "Overview",
           "anchor": "overview"
+        },
+        {
+          "level": 2,
+          "text": "HACS and Marketplace compatibility (v1.18.0)",
+          "anchor": "hacs-and-marketplace-compatibility-v1180"
         },
         {
           "level": 2,
@@ -410,6 +420,28 @@
       ]
     },
     {
+      "path": "docs/release-notes/1.18.0.md",
+      "title": "1.18.0",
+      "lines": 12,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.18.0",
+          "anchor": "whats-new-in-v1180"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
       "path": "docs/specs/card-editor-ha-form.md",
       "title": "Spec — Card editors on ha-form",
       "lines": 148,
@@ -569,6 +601,58 @@
       ]
     },
     {
+      "path": "docs/verification/draft-release-1.18.0.md",
+      "title": "Draft v1.18.0 - current and older Home Assistant verification",
+      "lines": 163,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Package identity",
+          "anchor": "package-identity"
+        },
+        {
+          "level": 2,
+          "text": "Observed results",
+          "anchor": "observed-results"
+        },
+        {
+          "level": 3,
+          "text": "TEST1: current Marketplace",
+          "anchor": "test1-current-marketplace"
+        },
+        {
+          "level": 3,
+          "text": "TEST2: older HACS",
+          "anchor": "test2-older-hacs"
+        },
+        {
+          "level": 2,
+          "text": "Browser verification",
+          "anchor": "browser-verification"
+        },
+        {
+          "level": 3,
+          "text": "TEST1 - Marketplace, 1440px and 380px",
+          "anchor": "test1---marketplace-1440px-and-380px"
+        },
+        {
+          "level": 3,
+          "text": "TEST2 - HACS, measured 1440px and 380px",
+          "anchor": "test2---hacs-measured-1440px-and-380px"
+        },
+        {
+          "level": 2,
+          "text": "Limits and operational notes",
+          "anchor": "limits-and-operational-notes"
+        },
+        {
+          "level": 2,
+          "text": "Evidence provenance",
+          "anchor": "evidence-provenance"
+        }
+      ]
+    },
+    {
       "path": "docs/verification/hacs-review-sync-1.17.2.md",
       "title": "HACS review sync — verification status",
       "lines": 31,
@@ -587,6 +671,43 @@
           "level": 2,
           "text": "Remaining check",
           "anchor": "remaining-check"
+        }
+      ]
+    },
+    {
+      "path": "docs/verification/marketplace-1.18.0.md",
+      "title": "HACS / Marketplace compatibility - v1.18.0 verification",
+      "lines": 123,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Results",
+          "anchor": "results"
+        },
+        {
+          "level": 2,
+          "text": "Live DEV evidence",
+          "anchor": "live-dev-evidence"
+        },
+        {
+          "level": 2,
+          "text": "Browser checks",
+          "anchor": "browser-checks"
+        },
+        {
+          "level": 3,
+          "text": "Live data - desktop and phone",
+          "anchor": "live-data---desktop-and-phone"
+        },
+        {
+          "level": 3,
+          "text": "Browser-only unavailable fixture - desktop and phone",
+          "anchor": "browser-only-unavailable-fixture---desktop-and-phone"
+        },
+        {
+          "level": 2,
+          "text": "Compatibility boundaries and remaining checks",
+          "anchor": "compatibility-boundaries-and-remaining-checks"
         }
       ]
     },
@@ -1800,6 +1921,53 @@
         ]
       },
       {
+        "path": "custom_components/custom_component_monitor/store.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "UPDATE_PROVIDERS",
+            "parent": "",
+            "signature": "UPDATE_PROVIDERS = frozenset({\"hacs\", \"marketplace\"})"
+          },
+          {
+            "kind": "class",
+            "name": "StoreUnavailable",
+            "parent": "",
+            "signature": "class StoreUnavailable(Exception)"
+          },
+          {
+            "kind": "class",
+            "name": "Provider",
+            "parent": "",
+            "signature": "class Provider"
+          },
+          {
+            "kind": "function",
+            "name": "require_ready",
+            "parent": "Provider",
+            "signature": "require_ready(self) -> None"
+          },
+          {
+            "kind": "function",
+            "name": "resolve_provider",
+            "parent": "",
+            "signature": "resolve_provider(hass: HomeAssistant) -> Provider"
+          },
+          {
+            "kind": "function",
+            "name": "async_repository_snapshot",
+            "parent": "",
+            "signature": "async_repository_snapshot(hass: HomeAssistant) -> tuple[str, dict[str, Any]]"
+          },
+          {
+            "kind": "function",
+            "name": "read",
+            "parent": "",
+            "signature": "read() -> dict[str, Any]"
+          }
+        ]
+      },
+      {
         "path": "custom_components/custom_component_monitor/todo.py",
         "symbols": [
           {
@@ -1912,7 +2080,7 @@
             "kind": "function",
             "name": "hniHacsInstallPath",
             "parent": "",
-            "signature": "function hniHacsInstallPath(item)"
+            "signature": "function hniHacsInstallPath(item, provider = \"hacs\")"
           },
           {
             "kind": "function",
@@ -2211,7 +2379,9 @@
     "tests/test_new_items_types.py",
     "tests/test_scan_install_dates.py",
     "tests/test_scan_updates_reconcile.py",
-    "tests/test_setup_and_service.py"
+    "tests/test_setup_and_service.py",
+    "tests/test_store.py",
+    "tests/test_tracker_card.cjs"
   ],
   "operations": [
     ".github/workflows/release.yaml",
@@ -2225,8 +2395,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "db339d7242b2c446dff979a7dc822a9f59f89259",
-    "content_hash": "ce3e6952319f5f18",
+    "source_commit": "8932cab0d8eb0bed7e54b67a700a9acac812c231",
+    "content_hash": "39f6549249c5e050",
     "generator": "navgen"
   }
 }
