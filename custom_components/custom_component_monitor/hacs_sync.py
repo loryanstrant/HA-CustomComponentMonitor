@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import NEW_ITEM_HACS_KINDS
 from .new_items import item_key
+from .store import StoreUnavailable, resolve_provider
 
 
 @dataclass
@@ -37,12 +38,19 @@ async def async_sync_hacs_new(
     result = HacsSyncResult()
     if not desired:
         return result
-    hacs = hass.data.get("hacs")
+    provider = resolve_provider(hass)
+    try:
+        provider.require_ready()
+    except StoreUnavailable as err:
+        result.error = str(err)
+        return result
+    hacs = provider.manager
+    label = provider.domain.title()
     repositories = getattr(hacs, "repositories", None)
     lookup = getattr(repositories, "get_by_full_name", None)
     writer = getattr(getattr(hacs, "data", None), "async_write", None)
     if not callable(lookup) or not callable(writer):
-        result.error = "HACS is not ready or its review-status interface is unavailable."
+        result.error = f"{label} is not ready or its review-status interface is unavailable."
         return result
     if getattr(getattr(hacs, "system", None), "disabled", False) or getattr(
         getattr(hacs, "status", None), "startup", False
@@ -84,5 +92,5 @@ async def async_sync_hacs_new(
         if isinstance(err, asyncio.CancelledError):
             raise
         # No exception text: upstream errors can contain tokens or URLs.
-        result.error = "Could not save review status in HACS; syncing will retry on the next scan."
+        result.error = f"Could not save review status in {label}; syncing will retry on the next scan."
     return result

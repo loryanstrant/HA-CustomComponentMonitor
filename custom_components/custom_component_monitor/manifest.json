@@ -1,7 +1,7 @@
 {
   "domain": "custom_component_monitor",
   "name": "Custom Component Monitor",
-  "after_dependencies": ["hacs"],
+  "after_dependencies": ["hacs", "marketplace"],
   "codeowners": ["@loryanstrant"],
   "config_flow": true,
   "dependencies": ["http", "lovelace"],
@@ -9,5 +9,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/loryanstrant/HA-CustomComponentMonitor/issues",
   "requirements": [],
-  "version": "1.17.4"
+  "version": "1.18.0"
 }

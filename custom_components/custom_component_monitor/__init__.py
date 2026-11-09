@@ -37,6 +37,8 @@ from .const import (
     RIU_CARD_BASE_PATH,
 )
 
+from .store import UPDATE_PROVIDERS
+
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.TODO]
@@ -334,7 +336,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if selected and state.entity_id not in selected:
                     continue
                 entry_re = registry.async_get(state.entity_id)
-                if entry_re is None or entry_re.platform != "hacs":
+                if entry_re is None or entry_re.platform not in UPDATE_PROVIDERS:
                     continue
                 targets.append(state.entity_id)
 
