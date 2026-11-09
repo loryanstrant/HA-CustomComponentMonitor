@@ -30,6 +30,32 @@ From v1.3.0, it also includes the former **HACS Update Action Tracker** function
 
 From v1.10.0, the Update Action Tracker can optionally use AI to **summarise and categorise** each pending update (see [AI update summaries & categories](#ai-update-summaries--categories)).
 
+## HACS and Marketplace compatibility (v1.18.0)
+
+The same integration supports legacy HACS and Home Assistant Marketplace. It follows
+Marketplace when that integration is configured, and never falls back to retired HACS
+files while Marketplace is starting or unavailable. Legacy HACS continues to use its
+version-six repository store.
+
+Existing sensor IDs, service names and card types intentionally keep their HACS names,
+so dashboards and automations need no migration. Installation dates, AI caches, review
+history and to-do items keep their existing local stores. The sensors expose
+`component_provider` (`hacs` or `marketplace`) for diagnostics.
+
+Pending updates and bulk-update actions recognize entities owned by either store, never
+core or unrelated integrations. Dismiss, automatic country hides and Restore write only
+the selected repositories through the active store's own persistence handler. Install
+links open the active store's repository screen; they do not download anything directly.
+
+If the selected store is unreadable, starting, disabled or incompatible, the sensors and
+cards show **Unavailable**, not zero or "up to date". Failed scans retry every 30 seconds;
+successful scans return to the normal hourly interval. Check the store integration, then
+use **Scan now** to request a scan. Store unavailability does not reset saved local history.
+
+Marketplace runtime and review-writing interfaces are private and guarded, checked
+against HA 2026.11.0. Future contract changes need compatibility verification rather than
+silently accepting an empty snapshot. New-item review can still be disabled in the options.
+
 ## Screenshots
 
 ### Custom Component Monitor card

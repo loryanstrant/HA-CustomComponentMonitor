@@ -27,7 +27,6 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -108,6 +107,7 @@ from .countries import CountryVerdict, classify, scope_is_foreign
 from .hacs_sync import async_sync_hacs_new
 from .install_dates import InstallDateRegistry
 from .new_items import NewItemRegistry, display_name_for
+from .store import UPDATE_PROVIDERS, async_repository_snapshot
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,6 +202,7 @@ class ComponentScanner:
         self.hass = hass
         self.config_dir = Path(hass.config.config_dir)
         self._hacs_repositories: dict[str, Any] | None = None
+        self.provider: str | None = None
         self._install_dates = install_dates
 
     # -- storage helpers -----------------------------------------------------
@@ -282,9 +283,7 @@ class ComponentScanner:
     async def _load_hacs_repositories(self) -> dict[str, Any]:
         """Return HACS repository dict (cached for the scan cycle)."""
         if self._hacs_repositories is None:
-            self._hacs_repositories = await self._load_storage_file(
-                "hacs.repositories"
-            )
+            self.provider, self._hacs_repositories = await async_repository_snapshot(self.hass)
         return self._hacs_repositories
 
     def _invalidate_cache(self) -> None:
@@ -315,6 +314,11 @@ class ComponentScanner:
 
     def _resolve_install_path(self, repo: dict[str, Any]) -> Path | None:
         """Determine the local filesystem path for an installed HACS repo."""
+        local_path = repo.get("local_path")
+        if local_path:
+            candidate = Path(local_path)
+            if candidate.is_relative_to(self.config_dir) and candidate.exists():
+                return candidate
         category = repo.get("category", "")
         full_name = repo.get("full_name", "")
         repo_short = full_name.split("/")[-1] if "/" in full_name else full_name
@@ -1251,6 +1255,10 @@ class ComponentScanner:
         update, so a branch-tracked repo reports its commits (not a stale
         ``version_installed`` string) and vice versa.
         """
+        if "pending_update" in repo:
+            if repo["pending_update"] and repo.get("current_version") and repo.get("available_version"):
+                return repo["current_version"], repo["available_version"]
+            return None
         version_installed = repo.get("version_installed")
         last_version = repo.get("last_version")
         if repo.get("releases") and version_installed and last_version:
@@ -1286,7 +1294,7 @@ class ComponentScanner:
             if state.state not in ("on", "off"):
                 continue
             entry = registry.async_get(state.entity_id)
-            if entry is None or entry.platform != "hacs":
+            if entry is None or entry.platform not in UPDATE_PROVIDERS:
                 continue
             attrs = state.attributes
             live.append(
@@ -1939,6 +1947,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     await self.async_sync_new_items_hacs(new_items)
 
             data = {
+                "provider": self.scanner.provider,
                 "all_components": all_components,
                 "themes": themes,
                 "frontend": frontend,
@@ -1950,9 +1959,11 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "install_dates_since": self.install_dates.seeded_at,
             }
         except Exception as exc:
+            self.update_interval = timedelta(seconds=30)
             _LOGGER.error("Error scanning custom components: %s", exc)
             raise UpdateFailed(exc) from exc
 
+        self.update_interval = SCAN_INTERVAL
         # Only wake the worker for updates it would actually attempt. Counting
         # `ai_pending` here instead would re-spawn a no-op task every hour once
         # an update had exhausted its retries (#91).
@@ -2378,9 +2389,10 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         registry = er.async_get(self.hass)
         by_name: dict[str, str] = {}
         by_version: dict[str, str] = {}
+        ambiguous_versions: set[str] = set()
         for state in self.hass.states.async_all("update"):
             entry = registry.async_get(state.entity_id)
-            if entry is None or entry.platform != "hacs":
+            if entry is None or entry.platform not in UPDATE_PROVIDERS:
                 continue
             title = (
                 state.attributes.get("title")
@@ -2391,8 +2403,12 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if norm:
                 by_name.setdefault(norm, state.entity_id)
             latest = norm_version(state.attributes.get("latest_version"))
-            if latest:
-                by_version.setdefault(latest, state.entity_id)
+            if latest and latest not in ambiguous_versions:
+                if latest in by_version:
+                    by_version.pop(latest)
+                    ambiguous_versions.add(latest)
+                else:
+                    by_version[latest] = state.entity_id
         return {"by_name": by_name, "by_version": by_version}
 
     @staticmethod
@@ -3470,23 +3486,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = CustomComponentMonitorCoordinator(hass, config_entry)
-    try:
-        # Load the AI cache before the first refresh so cached summaries are
-        # stamped on straight away and no AI call happens during setup (#91).
-        await coordinator._async_load_ai_cache()
-        # And the install dates, so the first scan sees what is already
-        # recorded rather than re-seeding over it (#93).
-        await coordinator.install_dates.async_load()
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as exc:
-        raise ConfigEntryNotReady(
-            f"Failed to initialize coordinator: {exc}"
-        ) from exc
-
-    # Store coordinator reference so the scan_now service can access it
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN]["coordinator"] = coordinator
+    coordinator = hass.data[DOMAIN]["coordinator"]
 
     entities: list[CoordinatorEntity] = [
         CustomComponentMonitorSensor(coordinator, desc)
@@ -3551,7 +3551,7 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return state attributes."""
         key = self.entity_description.key
-        attrs: dict[str, Any] = {}
+        attrs: dict[str, Any] = {"component_provider": (self.coordinator.data or {}).get("provider")}
 
         if key == SENSOR_ALL_COMPONENTS:
             components = self.coordinator.data.get("all_components", [])
@@ -3678,6 +3678,7 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             by_category[category] = by_category.get(category, 0) + 1
 
         attrs: dict[str, Any] = {
+            "component_provider": (self.coordinator.data or {}).get("provider"),
             ATTR_ITEMS: items,
             ATTR_BY_CATEGORY: by_category,
             ATTR_HIDDEN: hidden,

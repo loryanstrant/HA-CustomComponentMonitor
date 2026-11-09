@@ -57,6 +57,10 @@ async def setup_integration(hass: HomeAssistant):
     categorise = AsyncMock(return_value={"categories": ["Bug fixes"], "summary": "Ok."})
     with (
         patch(
+            "custom_components.custom_component_monitor.sensor.async_repository_snapshot",
+            return_value=("hacs", {}),
+        ),
+        patch(
             "custom_components.custom_component_monitor.sensor.ComponentScanner"
             ".scan_updates",
             return_value=dict(SCAN_RESULT, updates=[dict(SCAN_RESULT["updates"][0])]),
@@ -176,6 +180,10 @@ async def test_generate_summaries_errors_when_ai_is_off(hass: HomeAssistant):
     entry.add_to_hass(hass)
 
     with (
+        patch(
+            "custom_components.custom_component_monitor.sensor.async_repository_snapshot",
+            return_value=("hacs", {}),
+        ),
         patch(
             "custom_components.custom_component_monitor.sensor.ComponentScanner"
             ".scan_updates",

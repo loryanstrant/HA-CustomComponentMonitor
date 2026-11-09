@@ -2,7 +2,7 @@
  * Custom Component Monitor Card
  * A Lovelace card that displays unused HACS components.
  */
-var CARD_VERSION = "1.17.4";
+var CARD_VERSION = "1.18.0";
 
 var ALL_SECTIONS = ["integrations", "themes", "frontend"];
 
@@ -128,6 +128,9 @@ class CustomComponentMonitorCard extends HTMLElement {
     var lastScan = allComponents ? (allComponents.attributes.last_scan || "") : "";
 
     var sections = this._getVisibleSections();
+    var unavailable = !allComponents || ["unknown", "unavailable"].includes(allComponents.state) ||
+      sections.some(function(section) { return !section.sensor || ["unknown", "unavailable"].includes(section.sensor.state); });
+
 
     var totalInstalled = 0;
     var totalUnused = 0;
@@ -155,6 +158,11 @@ class CustomComponentMonitorCard extends HTMLElement {
       sectionsHtml += this._renderSection(sections[j]);
     }
 
+    if (unavailable) {
+      badgeHtml = '<span class="badge">&#9675; Unavailable</span>';
+      sectionsHtml = '<div class="empty-msg" role="status">Component data unavailable. HACS or Marketplace may still be starting. Check its integration, then run Scan now. This card will retry automatically.</div>';
+    }
+
     var unusedColor = totalUnused > 0 ? "var(--red)" : "var(--green)";
     var footerHtml = lastScan ? "Last scan: " + this._formatTime(lastScan) : "";
     var sortIcon = this._sortMode === "days" ? "mdi:sort-calendar-descending" : "mdi:sort-alphabetical-ascending";
@@ -178,10 +186,11 @@ class CustomComponentMonitorCard extends HTMLElement {
       "  --orange: var(--label-badge-yellow, #ff9800);",
       "}",
       "ha-card { padding: 16px; }",
-      ".header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }",
-      ".header .title { font-size:1.1em; font-weight:500; color:var(--primary); flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }",
+      ".header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }",
+      ".header .title { font-size:1.1em; font-weight:500; color:var(--primary); flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }",
       ".header-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }",
       ".badge { font-size:0.8em; padding:2px 8px; border-radius:12px; font-weight:500; color:#fff; }",
+      ".badge { background:var(--secondary); }",
       ".badge.clean { background:var(--green); }",
       ".badge.warn { background:var(--orange); }",
       ".badge.alert { background:var(--red); }",
@@ -229,7 +238,7 @@ class CustomComponentMonitorCard extends HTMLElement {
       "      " + badgeHtml,
       "    </div>",
       "  </div>",
-      '  <div class="toolbar">',
+      '  <div class="toolbar"' + (unavailable ? ' hidden style="display:none"' : '') + '>',
       '    <div class="summary">',
       '      <div class="stat"><div class="num">' + totalInstalled + '</div><div class="label">Installed</div></div>',
       '      <div class="stat"><div class="num">' + totalUsed + '</div><div class="label">Used</div></div>',

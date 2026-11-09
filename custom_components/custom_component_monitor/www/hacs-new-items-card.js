@@ -6,7 +6,7 @@
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.17.4";
+const CARD_VERSION = "1.18.0";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -57,7 +57,7 @@ function hniItemKey(item) {
  * screen owns the version picker, the README and the "restart Home Assistant"
  * follow-up, and it cannot install something on a mis-tap.
  */
-function hniHacsInstallPath(item) {
+function hniHacsInstallPath(item, provider = "hacs") {
   const fullName = String((item && item.full_name) || "");
   const slash = fullName.indexOf("/");
   if (slash <= 0 || slash >= fullName.length - 1) return "";
@@ -74,7 +74,7 @@ function hniHacsInstallPath(item) {
     : item.kind === "template" ? "template"
     : "";
   if (category) params.set("category", category);
-  return "/hacs/repository?" + params.toString();
+  return (provider === "marketplace" ? "/marketplace/repository?" : "/hacs/repository?") + params.toString();
 }
 
 function hniGroupByCategory(items) {
@@ -335,7 +335,7 @@ class HacsNewItemsCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     const sensor = hass.states[this._entityId()];
-    if (!sensor || sensor.state === "unavailable") {
+    if (!sensor || ["unknown", "unavailable"].includes(sensor.state)) {
       this._lastSensorSnapshot = null;
     } else {
       this._lastSensorSnapshot = { state: sensor.state, attributes: sensor.attributes || {} };
@@ -743,14 +743,13 @@ class HacsNewItemsCard extends HTMLElement {
   }
 
   _renderUnavailable() {
-    const entityId = hniEscapeHtml(this._entityId());
     this._groupKeys = {};
     this._els.subtitle.textContent = "";
     this._els.subtitle.style.display = "none";
     this._els.filters.innerHTML = "";
     this._els.selectionBar.classList.remove("visible");
     this._els.selectionBar.innerHTML = "";
-    this._els.groups.innerHTML = '<div class="empty-state">"' + entityId + '" is not available.</div>';
+    this._els.groups.innerHTML = '<div class="empty-state" role="status">&#9675; Component data unavailable. HACS or Marketplace may still be starting. Check its integration, then run Scan now. This card will retry automatically.</div>';
     this._els.showHiddenBtn.style.display = "none";
     this._els.hiddenAudit.innerHTML = "";
     this._confirm = null;
@@ -936,11 +935,12 @@ class HacsNewItemsCard extends HTMLElement {
         ' - open on GitHub">' + name + "</a>"
       : '<span class="item-name" title="' + nameTitle + '">' + name + "</span>";
 
-    const installPath = hniHacsInstallPath(item);
+    const provider = this._lastSensorSnapshot?.attributes?.component_provider || "hacs";
+    const installPath = hniHacsInstallPath(item, provider);
     const installHtml = installPath
       ? '<a class="icon-btn install" href="' + hniAttr(hniEscapeHtml(installPath)) +
         '" data-install="' + hniAttr(hniEscapeHtml(installPath)) +
-        '" title="Install with HACS"><ha-icon icon="mdi:download"></ha-icon></a>'
+        '" title="Install with ' + (provider === "marketplace" ? "Marketplace" : "HACS") + '"><ha-icon icon="mdi:download"></ha-icon></a>'
       : "";
 
     return (

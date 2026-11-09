@@ -4,7 +4,7 @@
  * Skip, Update, and Update & Action buttons.
  */
 
-const CARD_VERSION = "1.17.4";
+const CARD_VERSION = "1.18.0";
 const UAT_DOMAIN = "custom_component_monitor";
 // #91: AI summaries and the ai_enabled flag live here, not on the update.*
 // entities. Both the card and its editor read it.
@@ -283,6 +283,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     const sensor = this._hass.states[UAT_SENSOR];
     if (sensor) {
       const a = sensor.attributes || {};
+      parts.push("source=" + sensor.state + "|" + a.component_provider);
       parts.push("ai=" + String(a.ai_enabled) + "|" + String(a.ai_pending) + "|" + String(a.ai_in_progress));
       for (const u of a.updates || []) {
         parts.push(
@@ -349,24 +350,17 @@ class UpdateActionTrackerCard extends HTMLElement {
     }
     if (updateEntities.length === 0) return [];
 
-    if (this._hacsEntities === null) {
-      try {
-        const sources = await this._hass.callWS({ type: "entity/source" });
-        this._hacsEntities = new Set();
-        for (const [eid, info] of Object.entries(sources)) {
-          if (info.domain === "hacs") {
-            this._hacsEntities.add(eid);
-          }
-        }
-      } catch (_err) {
-        this._hacsEntities = new Set();
-        for (const eid of updateEntities) {
-          const pic = this._hass.states[eid].attributes.entity_picture || "";
-          if (pic.includes("brands.home-assistant.io")) {
-            this._hacsEntities.add(eid);
-          }
-        }
+    // Re-resolve ownership whenever the set changes or the provider migrates.
+    const provider = (this._hass.states[UAT_SENSOR] || {}).attributes?.component_provider;
+    const sourceKey = provider + "|" + updateEntities.slice().sort().join(",");
+    if (this._hacsEntities === null || this._sourceKey !== sourceKey) {
+      const sources = await this._hass.callWS({ type: "entity/source" });
+      const owned = new Set();
+      for (const [eid, info] of Object.entries(sources)) {
+        if (info.domain === "hacs" || info.domain === "marketplace") owned.add(eid);
       }
+      this._hacsEntities = owned;
+      this._sourceKey = sourceKey;
     }
     const filtered = updateEntities.filter((eid) => this._hacsEntities.has(eid));
     // Sort alphabetically by display name, like native HACS (#69).
@@ -612,8 +606,28 @@ class UpdateActionTrackerCard extends HTMLElement {
 
   async _doRender() {
     if (!this._hass) return;
-    const entities = await this._getHacsUpdateEntities();
+    const renderId = this._renderId = (this._renderId || 0) + 1;
     const title = uatEscapeHtml(this._config.title || "HACS Update Tracker");
+    const sensor = this._hass.states[UAT_SENSOR];
+    let entities = [];
+    let unavailable = !sensor || ["unknown", "unavailable"].includes(sensor.state);
+    if (!unavailable) {
+      try {
+        entities = await this._getHacsUpdateEntities();
+      } catch (_err) {
+        unavailable = true; // Never infer ownership from an icon or title.
+        this._hacsEntities = null;
+        this._lastStateHash = ""; // Retry on the next HA push.
+      }
+    }
+    if (renderId !== this._renderId) return;
+    if (unavailable) {
+      this._shownEntities = [];
+      this.shadowRoot.innerHTML = "<style>" + this._getStyles() + "</style><ha-card>" +
+        '<div class="header"><span class="title">' + title + '</span><span class="badge">&#9675; Unavailable</span></div>' +
+        '<div class="empty" role="status"><span>Component data unavailable. HACS or Marketplace may still be starting. Check its integration, then run Scan now. This card will retry automatically.</span></div></ha-card>';
+      return;
+    }
 
     /* Classify each update by component type for the filter chips (#69). */
     const typeMap = this._buildTypeMap();
@@ -669,7 +683,7 @@ class UpdateActionTrackerCard extends HTMLElement {
 
     let contentHtml;
     if (entities.length === 0) {
-      contentHtml = '<div class="empty"><ha-icon icon="mdi:check-circle-outline"></ha-icon><span>All HACS integrations are up to date!</span></div>';
+      contentHtml = '<div class="empty"><ha-icon icon="mdi:check-circle-outline"></ha-icon><span>All custom components are up to date!</span></div>';
     } else if (shown.length === 0) {
       contentHtml = '<div class="empty"><span>No updates match this filter.</span></div>';
     } else {
@@ -987,6 +1001,7 @@ class UpdateActionTrackerCard extends HTMLElement {
       ".header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }",
       ".title { font-size:1.1em; font-weight:500; color:var(--uat-primary); }",
       ".badge { font-size:0.8em; padding:2px 10px; border-radius:12px; font-weight:500; color:#fff; }",
+      ".badge { background:var(--uat-secondary); }",
       ".badge.clean { background:var(--uat-green); }",
       ".badge.pending { background:var(--uat-orange); }",
       ".filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }",
