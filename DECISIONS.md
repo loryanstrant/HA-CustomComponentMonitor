@@ -566,3 +566,36 @@ cards stay versioned with the manifest. Installed-repository usage monitoring is
 
 **Lesson:** a category expansion must reach both discovery and review synchronization;
 sharing the allow-list avoids a visible item whose dismissal never reaches HACS.
+
+
+## 2026-11-09 - Follow the active component store, not a retired file (1.18.0)
+
+Issue #75 was investigated against DEV on HA 2026.11.0. The approved fix uses a
+narrow HACS/Marketplace boundary: configured Marketplace owns inventory and review
+writes, even when temporarily unavailable. HACS uses its existing version-six file
+format. Marketplace uses one detached runtime snapshot per scan, with readiness and
+shape guards. No newer HA module is imported by the adapter.
+
+The coordinator is created before forwarding platforms and attaches unavailable sensors
+when its initial scan cannot read the store. It retries after 30 seconds rather than
+blocking HA startup, because Marketplace's startup work can run after HA started.
+A successful scan restores the hourly interval. Missing/corrupt/incompatible sources
+raise instead of becoming empty collections, so they cannot trigger registry pruning.
+Existing IDs, storage keys and review locks stay unchanged. Selected New flags use the
+active manager's own writer; local pending intent stays retryable on failure.
+
+All backend and card update ownership checks include hacs and marketplace. The tracker
+no longer guesses ownership from a brand icon if entity/source is unavailable. All four
+cards have unavailable states; the review card opens the active store's download screen.
+No new list, search/sort redesign or separate mobile-app work is included.
+
+Readiness and envelope checks guard the private interfaces. Tagged Marketplace source
+confirms its readiness fields; missing fields are explicitly rejected.
+Tagged HACS 2.0.5 declares VERSION_STORAGE="6", which corrected the draft's version-one
+assumption before the fix was committed. Regression tests cover both string and numeric
+six and reject incompatible envelopes. See docs/verification/marketplace-1.18.0.md for
+actual gate results and the limits of live testing.
+
+**Lesson:** migration compatibility must follow the active owner and its lifecycle, not
+simply try another filename. A readable stale file is worse than an honest unavailable
+state, and mock storage headers must be checked against the real writer.

@@ -27,7 +27,6 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -2390,6 +2389,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         registry = er.async_get(self.hass)
         by_name: dict[str, str] = {}
         by_version: dict[str, str] = {}
+        ambiguous_versions: set[str] = set()
         for state in self.hass.states.async_all("update"):
             entry = registry.async_get(state.entity_id)
             if entry is None or entry.platform not in UPDATE_PROVIDERS:
@@ -2403,8 +2403,12 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if norm:
                 by_name.setdefault(norm, state.entity_id)
             latest = norm_version(state.attributes.get("latest_version"))
-            if latest:
-                by_version.setdefault(latest, state.entity_id)
+            if latest and latest not in ambiguous_versions:
+                if latest in by_version:
+                    by_version.pop(latest)
+                    ambiguous_versions.add(latest)
+                else:
+                    by_version[latest] = state.entity_id
         return {"by_name": by_name, "by_version": by_version}
 
     @staticmethod
@@ -3482,23 +3486,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = CustomComponentMonitorCoordinator(hass, config_entry)
-    try:
-        # Load the AI cache before the first refresh so cached summaries are
-        # stamped on straight away and no AI call happens during setup (#91).
-        await coordinator._async_load_ai_cache()
-        # And the install dates, so the first scan sees what is already
-        # recorded rather than re-seeding over it (#93).
-        await coordinator.install_dates.async_load()
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as exc:
-        raise ConfigEntryNotReady(
-            f"Failed to initialize coordinator: {exc}"
-        ) from exc
-
-    # Store coordinator reference so the scan_now service can access it
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN]["coordinator"] = coordinator
+    coordinator = hass.data[DOMAIN]["coordinator"]
 
     entities: list[CoordinatorEntity] = [
         CustomComponentMonitorSensor(coordinator, desc)

@@ -5,9 +5,9 @@ HA 2026.11. No newer HA module is imported, so legacy HACS still works.
 """
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass
-import json
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +33,14 @@ class Provider:
         if self.manager is None:
             raise StoreUnavailable(f"{self.domain.title()} is not loaded; check its integration and retry Scan now.")
         system = getattr(self.manager, "system", None)
+        status = getattr(self.manager, "status", None)
+        if self.domain == "marketplace" and (
+            not isinstance(getattr(system, "disabled", None), bool)
+            or not isinstance(getattr(status, "startup", None), bool)
+        ):
+            raise StoreUnavailable("Marketplace readiness interface changed; check for a compatible monitor update.")
         if getattr(system, "disabled", False):
             raise StoreUnavailable(f"{self.domain.title()} is disabled; check its integration and retry Scan now.")
-        status = getattr(self.manager, "status", None)
         stage = getattr(self.manager, "stage", None)
         if getattr(status, "startup", False) or stage in ("setup", "startup"):
             raise StoreUnavailable(f"{self.domain.title()} is starting; component data will retry automatically.")
@@ -112,7 +117,7 @@ async def async_repository_snapshot(hass: HomeAssistant) -> tuple[str, dict[str,
     def read() -> dict[str, Any]:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict) or raw.get("version") != 1 or "data" not in raw:
+            if not isinstance(raw, dict) or raw.get("version") not in ("6", 6) or "data" not in raw:
                 raise StoreUnavailable("HACS repository storage format is incompatible; check for a compatible monitor update.")
             return _validate_snapshot(raw["data"])
         except (OSError, ValueError) as err:

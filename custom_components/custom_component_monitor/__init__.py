@@ -247,6 +247,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {}
 
+    from .sensor import CustomComponentMonitorCoordinator
+
+    coordinator = CustomComponentMonitorCoordinator(hass, entry)
+    await coordinator._async_load_ai_cache()
+    await coordinator.install_dates.async_load()
+    # Store readiness is not integration readiness. Attach unavailable sensors
+    # and let their coordinator retry, without blocking HA's startup tasks.
+    coordinator.data = {}
+    await coordinator.async_refresh()
+    hass.data[DOMAIN]["coordinator"] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Re-scan when the exclusion list (options) changes (#70).
