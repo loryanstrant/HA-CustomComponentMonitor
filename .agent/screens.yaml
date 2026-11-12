@@ -1,0 +1,3 @@
+# Where this repo's Lovelace cards are actually used. Format: dev-standards
+# standards/ux.md, "Screens". Allowed: desktop, phone, panel, watch.
+screens: [desktop, phone]
