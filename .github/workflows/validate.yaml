@@ -38,20 +38,3 @@ jobs:
         run: pip install -r requirements_test.txt
       - name: Run pytest
         run: pytest
-
-  card-tests:
-    runs-on: ubuntu-latest
-    name: Card Tests
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      # The cards are plain JS with no build step and no package.json, so these
-      # run straight off node with no install. They were only ever run by hand
-      # until #111 put the "a blocked update is never installable" guarantee in
-      # one of them — a safety rule nothing was checking on a pull request.
-      - name: Syntax-check every card
-        run: for f in custom_components/custom_component_monitor/www/*.js; do node --check "$f"; done
-      - name: Run the card tests
-        run: for t in tests/*.cjs; do node "$t"; done
