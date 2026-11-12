@@ -13,7 +13,10 @@
   <div class="preview-label">1 · Default view — incompatible updates hidden</div>
   <p class="preview-note">Six updates are pending. Two of them need a newer Home
   Assistant than the 2026.10.4 you are running, so they are not in the list.
-  The header says how many are being held back.</p>
+  The header says how many are being held back. The green button reads
+  &ldquo;2 of 4&rdquo; rather than &ldquo;all&rdquo;, because two of the four
+  listed publish no requirement and are left out of bulk updates &mdash; the
+  line beside it says which.</p>
 
   <div class="uat">
     <div class="ha-card">
@@ -39,7 +42,7 @@
 
       <div class="update-all-bar">
         <span class="compat-hint" style="margin-right:auto;"><span class="glyph unknown"></span> 2 skipped &mdash; requirement unknown</span>
-        <button class="btn btn-update-all">Update all (2)</button>
+        <button class="btn btn-update-all">Update 2 of 4</button>
       </div>
 
       <div class="items">
@@ -98,8 +101,10 @@
   <div class="preview-label">2 &middot; &ldquo;Show incompatible&rdquo; turned on</div>
   <p class="preview-note">The two held-back updates appear, marked down their
   left edge, each saying which Home Assistant version it needs and which one you
-  have. &ldquo;Update all&rdquo; does not grow &mdash; it still only acts on the
-  two that can safely install.</p>
+  have. The button still acts on the same two and now says so: &ldquo;2 of
+  6&rdquo;. Revealing more rows never quietly adds them to a bulk update.
+  When nothing is being held back the button goes back to reading
+  &ldquo;Update all (6)&rdquo;, exactly as it does today.</p>
 
   <div class="uat">
     <div class="ha-card">
@@ -124,8 +129,8 @@
       </div>
 
       <div class="update-all-bar">
-        <span class="compat-hint" style="margin-right:auto;"><span class="glyph blocked"></span> 2 blocked &middot; <span class="glyph unknown"></span> 2 requirement unknown &mdash; all skipped</span>
-        <button class="btn btn-update-all">Update all (2)</button>
+        <span class="compat-hint" style="margin-right:auto;"><span class="glyph blocked"></span> 2 blocked &middot; <span class="glyph unknown"></span> 2 requirement unknown</span>
+        <button class="btn btn-update-all">Update 2 of 6</button>
       </div>
 
       <div class="items">
@@ -264,8 +269,8 @@
   <!-- ============================================================= 4 -->
   <div class="preview-label">4 &middot; Requirement unknown &mdash; before you confirm</div>
   <p class="preview-note">This one publishes nothing we can read, so it is not
-  called compatible either way. It stays in the list, &ldquo;Update all&rdquo;
-  leaves it alone, and installing it on its own needs one tick first.</p>
+  called compatible either way. It stays in the list, the bulk button leaves it
+  alone, and installing it on its own needs one tick first.</p>
 
   <div class="uat">
     <div class="ha-card">
