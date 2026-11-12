@@ -599,3 +599,90 @@ actual gate results and the limits of live testing.
 **Lesson:** migration compatibility must follow the active owner and its lifecycle, not
 simply try another filename. A readable stale file is worse than an honest unavailable
 state, and mock storage headers must be checked against the real writer.
+
+
+## 2026-11-12 — "Unknown" is a third answer, not a quiet "yes" (1.19.0)
+
+A component's `hacs.json` can declare a minimum Home Assistant version, and both
+store providers already surface that file verbatim as `repository_manifest`. HACS
+enforces it on install. Nothing showed it to the user beforehand — so an install
+either failed with no visible reason, or (Microsoft 365 — Calendar, reported by the
+owner) went ahead and had to be rolled back by hand.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| Where the requirement comes from | **`repository_manifest["homeassistant"]` of the installed repository**, already in both stores' snapshots | Fetching `hacs.json` from GitHub per update; parsing the release notes |
+| How many answers | **Three — met / blocked / unknown**, with a reason on every unknown | Two, folding "nothing declared" into compatible |
+| What happens to a blocked update | **Hidden by default**, revealable, and with **no Update button at all** on the revealed row | A disabled button; a warning the user can click past |
+| What happens to an unknown | **Listed and labelled**, out of bulk, individually installable after one tick that is forgotten on close | Hidden with the blocked ones; silently installable |
+| Which version strings are trusted | **An allow-list of comparable strategies** (CalVer, SemVer, SimpleVer, BuildVer, PEP 440) | Whatever `AwesomeVersion` accepts |
+| Two rows claiming one entity | **The strictest claim wins** | First match, as the reconciler already did |
+| Where the protection lives | **Card and both of this integration's install services** | Card only |
+
+**Why "unknown" is first-class.** Most components declare nothing at all, so a
+two-state design would have shown the overwhelming majority as "compatible" —
+a claim nobody checked, attached to the exact updates this feature exists to
+warn about. `unknown` is therefore never folded into `met`: it is labelled, it
+carries *why* (`not_declared` / `unreadable` / `ha_unreadable`), it is excluded
+from every bulk install, and installing one needs an explicit per-row
+acknowledgement. The tick is deliberately forgotten when the row closes, so it
+can never be a setting the user left on.
+
+**Why the version strings needed an allow-list rather than a try/except.**
+`AwesomeVersion` accepts far more than it can order. `">=2026.11.0"` parses as
+`UNKNOWN` and raises only when compared — survivable. `"latest"` is worse: it
+parses as a valid `SPECIALCONTAINER` tag that compares as *newer than every real
+version*, so a single component declaring `"latest"` would have blocked every
+update in the house with a message naming a version that does not exist. Trusting
+only five ordered strategies turns both into an honest `unknown`. Two valid
+versions of incompatible shapes (`"2026.11.0"` against `"1.4"`) still raise on the
+comparison itself, and that path is caught too.
+
+**Why the strictest claim wins on a contested entity.** `_reconcile_updates`
+matches a snapshot row to a live `update.*` entity by repository URL, then by
+name, then by slug — and the two fallbacks are first-match, with nothing stopping
+a second row claiming an entity another row already took. A fork beside its
+original normalises to the same name and does exactly that. Before this feature a
+wrong match mis-attributed release notes; now it decides which declared minimum
+is believed, and being wrong in the *permissive* direction installs precisely what
+this release exists to hold back. So `compat.strictest()` and the card's
+`_stricterReq()` both answer an ambiguous entity with `blocked` > `unknown` >
+`met`. Over-restricting shows a message the user can read and override;
+under-restricting breaks their Home Assistant.
+
+**Why a blocked row has no button rather than a disabled one.** A disabled control
+still reads as "this is the thing to press", and the state it is disabled for can
+change under a re-render. Removing the control removes the question. **Skip** stays,
+because skipping an update you cannot install is the useful action.
+
+**Why the services refuse too, and the one hole that remains.** The card is not the
+only caller: `update_and_action` raises with both versions named, and `update_all`
+skips blocked components and names them in the log rather than failing partway
+through a batch. The asymmetry is deliberate — **blocked** is refused on both
+sides, **unknown** only in the card, because a service call cannot see a card
+acknowledgement and refusing it server-side would leave no route at all. Home
+Assistant's own `update.install` is not ours and cannot be intercepted; the card
+simply never offers it for a held-back update, and the release notes say so rather
+than implying blanket protection.
+
+**Why the bulk button had to be re-labelled in the same change.** With rows now
+excluded from a bulk action while still on screen, "Update all (3)" above five
+listed updates is a lie. It reads **Update all (N)** only when it will install all
+N, **Update selected (N)** under a filter, and **Update N of M** when some listed
+rows are out of scope — with a breakdown of why beside it, and the confirmation
+dialog quoting the same number. "Update all" also used to call the service with no
+`entity_ids` at all, meaning *install everything you can find*; it now always
+passes the explicit list, so a hidden update cannot be installed by a button that
+was not offering it.
+
+The card tests were only ever run by hand. `validate.yaml` now runs them (and
+`node --check` on every card) on every push and pull request, because one of them
+is the "a blocked update is never installable" guarantee.
+
+**Lesson:** a compatibility check has three possible answers and the third one is
+the common case. Designing for two means the default — nothing declared — inherits
+the reassuring label, which is the one outcome worse than no check at all. The same
+principle decides every tie downstream: when two sources disagree about whether an
+install is safe, the answer is the restrictive one, because the costs are not
+symmetric — a wrong warning is read and overridden in a second, and a wrong
+clearance is a rollback by hand.

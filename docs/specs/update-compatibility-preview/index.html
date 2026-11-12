@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design preview — Home Assistant compatibility filter</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="page">
+
+  <!-- ============================================================= 1 -->
+  <div class="preview-label">1 · Default view — incompatible updates hidden</div>
+  <p class="preview-note">Six updates are pending. Two of them need a newer Home
+  Assistant than the 2026.10.4 you are running, so they are not in the list.
+  The header says how many are being held back. The green button reads
+  &ldquo;2 of 4&rdquo; rather than &ldquo;all&rdquo;, because two of the four
+  listed publish no requirement and are left out of bulk updates &mdash; the
+  line beside it says which.</p>
+
+  <div class="uat">
+    <div class="ha-card">
+      <div class="header">
+        <span class="title">HACS Update Tracker</span>
+        <span class="header-badges">
+          <span class="badge pending">4 updates</span>
+          <span class="badge blocked"><span class="glyph blocked"></span> 2 incompatible</span>
+        </span>
+      </div>
+
+      <div class="filters">
+        <button class="chip active">All <span class="chip-count">4</span></button>
+        <button class="chip">Integrations <span class="chip-count">2</span></button>
+        <button class="chip">Cards <span class="chip-count">1</span></button>
+        <button class="chip">Themes <span class="chip-count">1</span></button>
+      </div>
+
+      <div class="compat-bar">
+        <button class="chip compat-chip"><span class="glyph blocked"></span> Show incompatible <span class="chip-count">2</span></button>
+        <span class="compat-hint">Hidden: they need a newer Home Assistant than 2026.10.4.</span>
+      </div>
+
+      <div class="update-all-bar">
+        <span class="compat-hint" style="margin-right:auto;"><span class="glyph unknown"></span> 2 skipped &mdash; requirement unknown</span>
+        <button class="btn btn-update-all">Update 2 of 4</button>
+      </div>
+
+      <div class="items">
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Dad Jokes</div>
+              <div class="item-version">1.4.0 &rarr; 1.5.0</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Mini Media Player</div>
+              <div class="item-version">1.16.8 &rarr; 1.17.0</div>
+              <div class="compat-line ok"><span class="glyph met"></span> Needs Home Assistant 2025.6.0 &mdash; you have it</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Mushroom Themes</div>
+              <div class="item-version">20250901 &rarr; 20251101</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Powercalc</div>
+              <div class="item-version">1.19.2 &rarr; 1.20.0</div>
+              <div class="compat-line ok"><span class="glyph met"></span> Needs Home Assistant 2026.4.0 &mdash; you have it</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================= 2 -->
+  <div class="preview-label">2 &middot; &ldquo;Show incompatible&rdquo; turned on</div>
+  <p class="preview-note">The two held-back updates appear, marked down their
+  left edge, each saying which Home Assistant version it needs and which one you
+  have. The button still acts on the same two and now says so: &ldquo;2 of
+  6&rdquo;. Revealing more rows never quietly adds them to a bulk update.
+  When nothing is being held back the button goes back to reading
+  &ldquo;Update all (6)&rdquo;, exactly as it does today.</p>
+
+  <div class="uat">
+    <div class="ha-card">
+      <div class="header">
+        <span class="title">HACS Update Tracker</span>
+        <span class="header-badges">
+          <span class="badge pending">6 updates</span>
+          <span class="badge blocked"><span class="glyph blocked"></span> 2 incompatible</span>
+        </span>
+      </div>
+
+      <div class="filters">
+        <button class="chip active">All <span class="chip-count">6</span></button>
+        <button class="chip">Integrations <span class="chip-count">4</span></button>
+        <button class="chip">Cards <span class="chip-count">1</span></button>
+        <button class="chip">Themes <span class="chip-count">1</span></button>
+      </div>
+
+      <div class="compat-bar">
+        <button class="chip compat-chip active"><span class="glyph blocked"></span> Showing incompatible <span class="chip-count">2</span></button>
+        <span class="compat-hint">They cannot be installed from this card.</span>
+      </div>
+
+      <div class="update-all-bar">
+        <span class="compat-hint" style="margin-right:auto;"><span class="glyph blocked"></span> 2 blocked &middot; <span class="glyph unknown"></span> 2 requirement unknown</span>
+        <button class="btn btn-update-all">Update 2 of 6</button>
+      </div>
+
+      <div class="items">
+        <div class="item blocked">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Alarmo</div>
+              <div class="item-version">1.9.9 &rarr; 1.10.0</div>
+              <div class="compat-line blocked"><span class="glyph blocked"></span> Needs Home Assistant 2026.12.0 &mdash; you have 2026.10.4</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Dad Jokes</div>
+              <div class="item-version">1.4.0 &rarr; 1.5.0</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Microsoft 365 &mdash; Calendar</div>
+              <div class="item-version">1.13.1 &rarr; 1.14.0</div>
+              <div class="compat-line blocked"><span class="glyph blocked"></span> Needs Home Assistant 2026.11.0 &mdash; you have 2026.10.4</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Mini Media Player</div>
+              <div class="item-version">1.16.8 &rarr; 1.17.0</div>
+              <div class="compat-line ok"><span class="glyph met"></span> Needs Home Assistant 2025.6.0 &mdash; you have it</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Mushroom Themes</div>
+              <div class="item-version">20250901 &rarr; 20251101</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Powercalc</div>
+              <div class="item-version">1.19.2 &rarr; 1.20.0</div>
+              <div class="compat-line ok"><span class="glyph met"></span> Needs Home Assistant 2026.4.0 &mdash; you have it</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9662;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================= 3 -->
+  <div class="preview-label">3 &middot; An incompatible update, opened</div>
+  <p class="preview-note">Opening it explains the block, says where the
+  requirement came from, and links the release. There is no Update button to
+  press &mdash; Skip is still there if you want it out of the list.</p>
+
+  <div class="uat">
+    <div class="ha-card">
+      <div class="header">
+        <span class="title">HACS Update Tracker</span>
+        <span class="header-badges">
+          <span class="badge pending">6 updates</span>
+          <span class="badge blocked"><span class="glyph blocked"></span> 2 incompatible</span>
+        </span>
+      </div>
+
+      <div class="items">
+        <div class="item blocked">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Microsoft 365 &mdash; Calendar</div>
+              <div class="item-version">1.13.1 &rarr; 1.14.0</div>
+              <div class="compat-line blocked"><span class="glyph blocked"></span> Needs Home Assistant 2026.11.0 &mdash; you have 2026.10.4</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9652;</span>
+          </div>
+
+          <div class="compat-warn">
+            <span class="glyph blocked"></span>
+            <span class="warn-body">
+              <strong>Version 1.14.0 needs Home Assistant 2026.11.0.</strong>
+              You are on 2026.10.4, so this card will not install it. Update Home
+              Assistant first, or leave this one for now.
+              <span class="warn-why">Stated by the component itself for version 1.14.0, and repeated in its release notes.</span>
+            </span>
+          </div>
+
+          <div class="notes">
+            <div class="notes-content">
+              <strong>What&rsquo;s changed</strong><br />
+              This release requires minimum HA Core 2026.11.0.<br />
+              &bull; Switch to the new calendar entity feature flags.
+            </div>
+          </div>
+
+          <div class="release-link"><a href="#">View on GitHub</a></div>
+
+          <div class="actions">
+            <button class="btn btn-skip">Skip</button>
+            <span class="blocked-why">Installing is blocked until Home Assistant is 2026.11.0 or newer.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================= 4 -->
+  <div class="preview-label">4 &middot; Requirement unknown &mdash; before you confirm</div>
+  <p class="preview-note">This one publishes nothing we can read, so it is not
+  called compatible either way. It stays in the list, the bulk button leaves it
+  alone, and installing it on its own needs one tick first.</p>
+
+  <div class="uat">
+    <div class="ha-card">
+      <div class="header">
+        <span class="title">HACS Update Tracker</span>
+        <span class="header-badges">
+          <span class="badge pending">4 updates</span>
+          <span class="badge blocked"><span class="glyph blocked"></span> 2 incompatible</span>
+        </span>
+      </div>
+
+      <div class="items">
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Dad Jokes</div>
+              <div class="item-version">1.4.0 &rarr; 1.5.0</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9652;</span>
+          </div>
+
+          <div class="compat-warn unknown">
+            <span class="glyph unknown"></span>
+            <span class="warn-body">
+              <strong>Version 1.5.0 does not say which Home Assistant it needs.</strong>
+              That is not the same as saying it works on 2026.10.4. It may install
+              and then fail to load.
+              <span class="warn-why">Nothing usable found in the component&rsquo;s own files or its release notes.</span>
+            </span>
+          </div>
+
+          <div class="compat-ack">
+            <span class="box"></span>
+            <span>I understand the requirement is unknown &mdash; install 1.5.0 anyway</span>
+          </div>
+
+          <div class="release-link"><a href="#">View on GitHub</a></div>
+
+          <div class="actions">
+            <button class="btn btn-skip">Skip</button>
+            <button class="btn btn-update" disabled>Update</button>
+            <button class="btn btn-action" disabled>Update &amp; Action</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================= 5 -->
+  <div class="preview-label">5 &middot; Requirement unknown &mdash; after you confirm</div>
+  <p class="preview-note">The tick enables the two install buttons for that one
+  update only. It is forgotten as soon as you close the row, so it cannot carry
+  over to anything else.</p>
+
+  <div class="uat">
+    <div class="ha-card">
+      <div class="items">
+        <div class="item">
+          <div class="item-header">
+            <span class="entity-pic"></span>
+            <div class="item-info">
+              <div class="item-name">Dad Jokes</div>
+              <div class="item-version">1.4.0 &rarr; 1.5.0</div>
+              <div class="compat-line unknown"><span class="glyph unknown"></span> Requirement unknown</div>
+            </div>
+            <span class="ha-icon expand-icon">&#9652;</span>
+          </div>
+
+          <div class="compat-warn unknown">
+            <span class="glyph unknown"></span>
+            <span class="warn-body">
+              <strong>Version 1.5.0 does not say which Home Assistant it needs.</strong>
+              That is not the same as saying it works on 2026.10.4. It may install
+              and then fail to load.
+            </span>
+          </div>
+
+          <div class="compat-ack">
+            <span class="box checked">&#10003;</span>
+            <span>I understand the requirement is unknown &mdash; install 1.5.0 anyway</span>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-skip">Skip</button>
+            <button class="btn btn-update">Update</button>
+            <button class="btn btn-action">Update &amp; Action</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

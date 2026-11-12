@@ -237,6 +237,28 @@ async def _async_get_release_notes(hass: HomeAssistant, entity_id: str) -> str |
     return None
 
 
+async def _async_block_reason(hass: HomeAssistant, entity_id: str) -> str | None:
+    """Why installing *entity_id* is refused here, or ``None`` (#111).
+
+    A component that declares a minimum Home Assistant version higher than
+    the running one is refused by both of this integration's install services,
+    so "hidden in the card" is not the only protection — an automation or a
+    Developer-Tools call hits the same refusal.
+
+    The last hourly scan can legitimately not know an update entity yet (HACS
+    surfaces one before the next scan runs), and an unscanned entity must not
+    become a way past the check, so the scan is re-run first in that case.
+    ``update.install`` itself is Home Assistant's own service and cannot be
+    intercepted; the card simply never offers it for a blocked row.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get("coordinator")
+    if coordinator is None:
+        return None
+    if entity_id not in coordinator.known_update_entity_ids():
+        await coordinator.async_refresh()
+    return coordinator.update_block_reason(entity_id)
+
+
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the entry so an exclusion-list change re-runs the scan (#70)."""
     await hass.config_entries.async_reload(entry.entry_id)
@@ -287,6 +309,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             state = hass.states.get(entity_id)
             if state is None:
                 raise ValueError(f"Entity {entity_id} not found")
+
+            # Refuse an update this Home Assistant is too old for, before
+            # anything is installed or any action item is written (#111).
+            block_reason = await _async_block_reason(hass, entity_id)
+            if block_reason:
+                raise ServiceValidationError(block_reason)
 
             friendly_name = state.attributes.get("friendly_name", entity_id)
             latest_version = version or state.attributes.get("latest_version", "unknown")
@@ -350,10 +378,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     continue
                 targets.append(state.entity_id)
 
+            # Drop anything this Home Assistant is too old for (#111). Done
+            # here rather than letting each install fail: a bulk action must
+            # not install some things and throw on others, and the card's
+            # button already promises a count that excludes these.
+            coordinator = hass.data.get(DOMAIN, {}).get("coordinator")
+            blocked: list[str] = []
+            if coordinator is not None and targets:
+                if not set(targets) <= coordinator.known_update_entity_ids():
+                    await coordinator.async_refresh()
+                blocked = [
+                    entity_id
+                    for entity_id in targets
+                    if coordinator.update_block_reason(entity_id)
+                ]
+                if blocked:
+                    targets = [
+                        entity_id for entity_id in targets if entity_id not in blocked
+                    ]
+
             _LOGGER.info(
-                "update_all: %d HACS component(s) with available updates%s",
+                "update_all: %d HACS component(s) with available updates%s%s",
                 len(targets),
                 " (selected subset)" if selected else "",
+                (
+                    f"; skipped {len(blocked)} needing a newer Home Assistant: "
+                    + ", ".join(blocked)
+                    if blocked
+                    else ""
+                ),
             )
             for entity_id in targets:
                 try:

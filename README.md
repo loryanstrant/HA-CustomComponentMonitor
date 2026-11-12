@@ -129,6 +129,7 @@ When you filter the list (by component type or AI category), the bulk button bec
 
 - 📋 **Smart Update Card**: Lists pending HACS integration updates with Skip, Update, and Update & Action buttons
 - 🚀 **Update All / Update Selected**: One button to install every pending HACS update — or, when the list is filtered (by component type or AI category), just the visible ones (e.g. update all Cards without touching integrations that need a restart). Also exposed as the `update_all` service with an optional `entity_ids` subset
+- 🛑 **Home Assistant compatibility check**: Updates that need a newer Home Assistant than you're running are identified from the component's own HACS manifest, **hidden by default**, and can't be installed from the card or this integration's services. Reveal them with **Show incompatible**; every listed update states its requirement as ● met / ◐ needs a newer Home Assistant / ○ unknown, in shapes and words
 - 📝 **Expandable Release Notes**: Fetches release notes directly from Home Assistant update entities
 - 🔗 **Release Links**: Links to the GitHub release page when provided by the update entity
 - 🔄 **Real-time Progress Tracking**: Shows installation progress and disables action buttons during active updates
@@ -193,12 +194,24 @@ Each unused sensor provides:
 
 The `sensor.hacs_updates` sensor provides:
 
-- `updates` — list of components with a pending update, each with `name`, `type`, `repository`, `current_version`, `available_version`, and `entity_id` (the matching HACS `update.*` entity, when one is known)
+- `updates` — list of components with a pending update, each with `name`, `type`, `repository`, `current_version`, `available_version`, `entity_id` (the matching HACS `update.*` entity, when one is known), and `ha_requirement` (v1.19.0 — see below)
+- `updates_blocked` — how many pending updates declare a minimum Home Assistant version newer than the one you are running (v1.19.0)
+- `updates_unknown_requirement` — how many pending updates declare nothing usable, so their requirement can't be determined (v1.19.0)
 - `ai_enabled` — whether AI summaries are switched on and pointed at an entity
 - `ai_pending` — how many pending updates are still missing an AI summary
 - `ai_in_progress` — `true` while a summary generation run is under way
 - `ai_last_error` — the last AI failure message, or `null` when the last run was clean
 - `ai_last_run` — timestamp of the last generation run
+
+`ha_requirement` is an object describing that update's Home Assistant requirement (see [Home Assistant compatibility](#home-assistant-compatibility-v1190)):
+
+```yaml
+ha_requirement:
+  state: blocked        # met | blocked | unknown
+  required: "2026.11.0" # what the component declares, or null
+  installed: "2026.10.4"
+  reason: null          # not_declared | unreadable | ha_unreadable, or null when state is met/blocked
+```
 
 Because its state is a simple count, you can show a card or trigger an automation only when updates exist — for example with a conditional card on `sensor.hacs_updates` being above `0`, mirroring how you might gate the unused-components card on the unused sensors.
 
@@ -344,11 +357,40 @@ Every option below is available in the visual editor — no YAML required.
 - Lists pending HACS integration updates
 - Shows component icon, current version, and available version
 - Provides **Skip**, **Update**, and **Update & Action** buttons
-- Offers a context-aware bulk button (with a confirmation): **Update all (N)** normally, or **Update selected (N)** when the list is filtered — installing only the visible updates, so you can update no-restart items (Cards/Themes) without touching integrations
-- Displays a pending count badge, or **Up to date** when clear
+- Offers a context-aware bulk button (with a confirmation): **Update all (N)** normally, **Update selected (N)** when the list is filtered, or **Update N of M** when some listed updates are out of scope — installing only the visible, installable updates, so you can update no-restart items (Cards/Themes) without touching integrations
+- Displays a pending count badge, **None installable** when every pending update needs a newer Home Assistant, or **Up to date** when clear
+- Holds back updates that need a newer Home Assistant, and states every listed update's requirement — see [Home Assistant compatibility](#home-assistant-compatibility-v1190)
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing
 - Filter chips by component type, and (when AI categorisation is enabled) by category, plus a sort-by-category toggle
+
+#### Home Assistant compatibility (v1.19.0)
+
+Some component updates need a newer Home Assistant than you're running. The component declares that minimum in its own HACS manifest, and HACS enforces it on install — but nothing showed it to you beforehand, so an install either failed with no visible reason or (as with Microsoft 365 — Calendar) went ahead and had to be rolled back by hand.
+
+The card now reads that declared minimum for every pending update and compares it with your Home Assistant version. Each update is one of three things:
+
+| | State | What the card does |
+|---|---|---|
+| ● | **Met** — the declared minimum is satisfied | Lists it normally. The row says `Needs Home Assistant 2025.6.0 — you have it` |
+| ◐ | **Needs a newer Home Assistant** | **Hidden by default.** The header shows `◐ N incompatible` and a **Show incompatible** switch reveals them, dimmed and marked. A revealed row has **no Update button at all** — only **Skip**, and a line saying `Installing is blocked until Home Assistant is 2026.11.0 or newer.` |
+| ○ | **Requirement unknown** — nothing usable declared | Stays listed, labelled `Requirement unknown`, and **never called compatible**. Left out of bulk installs. Installing it needs a tick on that row (`I understand the requirement is unknown — install 1.5.0 anyway`), which is forgotten as soon as the row closes |
+
+The three marks are drawn shapes paired with words, so nothing depends on being able to tell colours apart.
+
+**The bulk button names its own scope.** It reads **Update all (5)** only when it really will install all five; **Update N of M** when some listed updates are out of scope, with a line beside it breaking down why (`◐ 1 blocked · ○ 2 requirement unknown`). The confirmation dialog quotes the same number. Revealing incompatible updates never increases what the button will install.
+
+**The protection isn't only in the card.** Both of this integration's install services refuse too, so an automation or a Developer Tools call hits the same wall:
+
+- `custom_component_monitor.update_and_action` raises an error naming both versions and installs nothing.
+- `custom_component_monitor.update_all` skips those components (naming them in the log) and installs the rest, rather than installing some and failing partway.
+
+Two limits worth knowing:
+
+- **Home Assistant's own `update.install`** — the update entity's more-info dialog, or an automation calling that service directly — is not this integration's service and cannot be intercepted. The card simply never offers it for a held-back update.
+- **An unknown requirement is not a clearance.** Most components declare no minimum at all, so "Requirement unknown" is common and honest. It means nobody can tell you in advance, not that the update is fine.
+
+Two counters are recorded on `sensor.hacs_updates` (`updates_blocked` and `updates_unknown_requirement`) so an automation can act on this without reading the whole list.
 
 #### AI summaries & categories
 
@@ -651,6 +693,8 @@ Installs a HACS update and creates a to-do item to track follow-up actions.
 | `entity_id` | Yes | The update entity to install, for example `update.my_integration_update` |
 | `version` | No | Specific version to install. If omitted, installs the latest version |
 
+From v1.19.0 it **refuses** an update whose component declares a minimum Home Assistant version newer than the one you are running, raising an error that names both versions and installing nothing — see [Home Assistant compatibility](#home-assistant-compatibility-v1190).
+
 The to-do item created includes:
 
 - **Summary**: `{Integration name} updated to {version} ({date})`
@@ -671,7 +715,9 @@ Installs **every** pending HACS update in one call. It walks all `update` entiti
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `create_actions` | No | When `true`, each update is installed via `update_and_action` so a follow-up to-do item is created per component (default `false`) |
-| `entity_ids` | No | Only update these update entities. If omitted, every pending HACS update is installed. The card's **Update selected** passes the currently-filtered set here |
+| `entity_ids` | No | Only update these update entities. If omitted, every pending HACS update is installed. The card always passes an explicit list here — the rows it is showing, minus anything it is holding back |
+
+From v1.19.0 any component that declares a minimum Home Assistant version newer than the one you are running is **skipped and named in the log**, so one incompatible component can't stop the rest from installing. That applies to entities you listed explicitly too — see [Home Assistant compatibility](#home-assistant-compatibility-v1190).
 
 Example service call:
 
@@ -749,6 +795,8 @@ Derives expected `custom:` card type names from HACS plugin JS filenames, then s
 That comes from HACS's stored repository data, which is a snapshot written periodically and can lag reality in both directions — missing an update HACS has already surfaced, or still listing one you installed hours ago. The scan therefore **reconciles it against the live HACS `update.*` entities**, which are authoritative: an update only the entities know about is added (and can now get an AI summary), and a row the entity says is already installed or skipped is dropped. The card and the sensor consequently always describe the same set of updates.
 
 The update card looks for pending `update.*` entities provided by HACS. For **Update & Action**, it calls Home Assistant's `update.install` service and then creates a persistent item in `todo.hacs_update_actions` with release context and release notes when available.
+
+From v1.19.0 each reconciled row also carries `ha_requirement`, read from the installed repository's own `hacs.json` (`homeassistant` key) and compared against the running Home Assistant version. Only version strings that can actually be ordered are trusted — a declared `">=2026.11.0"` or `"latest"` is reported as unknown rather than guessed at — and where two snapshot rows end up claiming the same update entity, the stricter of their two requirements is the one reported. See [Home Assistant compatibility](#home-assistant-compatibility-v1190).
 
 ## Contributing
 

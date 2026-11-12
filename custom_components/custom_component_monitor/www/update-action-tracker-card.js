@@ -4,7 +4,7 @@
  * Skip, Update, and Update & Action buttons.
  */
 
-const CARD_VERSION = "1.18.0";
+const CARD_VERSION = "1.19.0";
 const UAT_DOMAIN = "custom_component_monitor";
 // #91: AI summaries and the ai_enabled flag live here, not on the update.*
 // entities. Both the card and its editor read it.
@@ -224,6 +224,12 @@ class UpdateActionTrackerCard extends HTMLElement {
     this._categorySort = false; // #67: sort by AI category
     this._shownEntities = []; // currently-visible set, for "Update selected"
     this._aiBusy = false; // #91: a generate_summaries call is in flight
+    // #111: updates that need a newer Home Assistant are hidden by default.
+    this._showIncompatible = false;
+    // #111: per-row "I understand the requirement is unknown" ticks. Deliberately
+    // cleared whenever a row closes, so the risk is taken once per install.
+    this._ackUnknown = {};
+    this._eligibleEntities = []; // the subset "Update all" may actually install
   }
 
   /* -- Lovelace lifecycle ------------------------------------- */
@@ -286,10 +292,14 @@ class UpdateActionTrackerCard extends HTMLElement {
       parts.push("source=" + sensor.state + "|" + a.component_provider);
       parts.push("ai=" + String(a.ai_enabled) + "|" + String(a.ai_pending) + "|" + String(a.ai_in_progress));
       for (const u of a.updates || []) {
+        // #111: the Home Assistant requirement is part of what a row shows, so
+        // a scan that newly resolves one must re-render the card.
+        const req = u.ha_requirement || {};
         parts.push(
           "u:" + (u.entity_id || u.repository || u.name) +
           "|" + ((u.summary || "").length) +
-          "|" + ((u.categories || []).join(","))
+          "|" + ((u.categories || []).join(",")) +
+          "|" + (req.state || "") + "/" + (req.required || "") + "/" + (req.installed || "")
         );
       }
     }
@@ -448,6 +458,79 @@ class UpdateActionTrackerCard extends HTMLElement {
     return { categories: [], summary: "" };
   }
 
+  /* -- Home Assistant compatibility (#111) --------------------- */
+
+  // Build {entity|repoKey|name -> ha_requirement} from sensor.hacs_updates. The
+  // integration compares each repository's declared minimum Home Assistant
+  // version against the running one; see compat.py.
+  _buildCompatMap() {
+    const byEntity = {}, byRepo = {}, byName = {};
+    const s = this._hass.states[UAT_SENSOR];
+    const updates = (s && s.attributes && s.attributes.updates) || [];
+    const put = (bucket, key, req) => {
+      // Two rows can collide on a key — a fork beside its original normalises
+      // to the same name, and the scanner's own entity matching can hand one
+      // entity to two rows. Keep the STRICTER claim rather than whichever came
+      // first: over-warning shows a message the user can read and override,
+      // under-warning installs the thing this card exists to hold back.
+      bucket[key] = this._stricterReq(bucket[key], req);
+    };
+    for (const u of updates) {
+      const req = u.ha_requirement;
+      if (!req || typeof req !== "object") continue;
+      if (u.entity_id) put(byEntity, u.entity_id, req);
+      const rk = this._repoKey(u.repository);
+      if (rk) put(byRepo, rk, req);
+      if (u.name) put(byName, String(u.name).toLowerCase().trim(), req);
+    }
+    return { byEntity, byRepo, byName };
+  }
+
+  // blocked > unknown > met. Mirrors compat.strictest() on the Python side.
+  _stricterReq(a, b) {
+    const rank = (r) => (r && r.state === "blocked" ? 2 : r && r.state === "met" ? 0 : 1);
+    if (!a) return b;
+    if (!b) return a;
+    return rank(b) > rank(a) ? b : a;
+  }
+
+  // Never returns "met" by default: a row the last scan didn't cover is
+  // "requirement unknown", not "checked and cleared".
+  _compatOf(entityId, map) {
+    const unknown = { state: "unknown", required: null, installed: null, reason: "not_declared" };
+    if (!map) return unknown;
+    if (map.byEntity && map.byEntity[entityId]) return map.byEntity[entityId];
+    const a = (this._hass.states[entityId] || {}).attributes || {};
+    const rk = this._repoKey(a.release_url);
+    if (rk && map.byRepo[rk]) return map.byRepo[rk];
+    const name = String(a.friendly_name || "").replace(/ update$/i, "").toLowerCase().trim();
+    if (name && map.byName[name]) return map.byName[name];
+    return unknown;
+  }
+
+  // The Home Assistant version to quote in the hidden-rows hint. Prefer what
+  // the integration compared against; fall back to what the frontend knows.
+  _runningHaVersion(compatMap) {
+    const maps = compatMap ? [compatMap.byEntity, compatMap.byRepo, compatMap.byName] : [];
+    for (const m of maps) {
+      for (const key of Object.keys(m || {})) {
+        if (m[key] && m[key].installed) return String(m[key].installed);
+      }
+    }
+    const cfg = (this._hass && this._hass.config) || {};
+    return cfg.version ? String(cfg.version) : "";
+  }
+
+  // A blocked row renders no install button and an unknown one renders a
+  // disabled pair, but guard the handlers too: a click on a stale DOM must not
+  // slip past the rule the card exists to enforce.
+  _installAllowed(entityId) {
+    const req = this._compatOf(entityId, this._buildCompatMap());
+    if (req.state === "blocked") return false;
+    if (req.state === "unknown" && !this._ackUnknown[entityId]) return false;
+    return true;
+  }
+
   /* -- Progress helper ---------------------------------------- */
 
   _getProgressInfo(entityId) {
@@ -494,6 +577,7 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   async _handleUpdate(entityId) {
+    if (!this._installAllowed(entityId)) return;
     this._actionInProgress[entityId] = "update";
     this._doRender();
     this._manageProgressPoll();
@@ -506,6 +590,7 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   async _handleUpdateAndAction(entityId) {
+    if (!this._installAllowed(entityId)) return;
     this._actionInProgress[entityId] = "update_action";
     this._doRender();
     this._manageProgressPoll();
@@ -518,23 +603,37 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   async _handleUpdateAll() {
-    // Act on the currently-visible (filtered) set captured during render.
-    const targets = (this._shownEntities || []).slice();
+    // #111: act on the ELIGIBLE set captured during render — the visible rows
+    // whose Home Assistant requirement is met. Blocked and unknown are both
+    // left out, and the dialog quotes that same number so the confirmation
+    // cannot promise more than the service will do.
+    const targets = (this._eligibleEntities || []).slice();
     if (!targets.length) return;
     const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
+    const partial = targets.length < (this._shownEntities || []).length;
     const noun = "update" + (targets.length > 1 ? "s" : "");
-    const msg = filtered
-      ? "Install the " + targets.length + " selected HACS " + noun + " now?"
-      : "Install all " + targets.length + " available HACS " + noun + " now?";
+    let msg;
+    if (partial) {
+      // Some listed rows are out of scope (blocked, or requirement unknown).
+      // Said whether or not a type/category filter is also on, because "the N
+      // selected" would otherwise quietly mean fewer than the N on screen.
+      msg = "Install " + targets.length + " of the " + this._shownEntities.length +
+        " listed HACS updates now? The rest are left out.";
+    } else if (filtered) {
+      msg = "Install the " + targets.length + " selected HACS " + noun + " now?";
+    } else {
+      msg = "Install all " + targets.length + " available HACS " + noun + " now?";
+    }
     if (!window.confirm(msg)) return;
     // Mark each target in progress for immediate feedback.
     targets.forEach((eid) => { this._actionInProgress[eid] = "update"; });
     this._doRender();
     this._manageProgressPoll();
     try {
-      // Pass the explicit subset when filtered; otherwise let the service update all.
-      const data = filtered ? { entity_ids: targets } : {};
-      await this._hass.callService(UAT_DOMAIN, "update_all", data);
+      // #111: ALWAYS pass the explicit eligible set. The old empty-payload
+      // branch told the service "everything you can find", which would have
+      // installed the very updates this card is hiding.
+      await this._hass.callService(UAT_DOMAIN, "update_all", { entity_ids: targets });
     } catch (_err) {
       targets.forEach((eid) => { delete this._actionInProgress[eid]; });
       this._doRender();
@@ -593,6 +692,9 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   _toggleExpand(entityId) {
+    // #111: an "I understand the requirement is unknown" tick lasts as long as
+    // the row is open and no longer, so it can never carry over to the next one.
+    this._ackUnknown = {};
     if (this._expandedEntity === entityId) {
       this._expandedEntity = null;
     } else {
@@ -623,16 +725,31 @@ class UpdateActionTrackerCard extends HTMLElement {
     if (renderId !== this._renderId) return;
     if (unavailable) {
       this._shownEntities = [];
+      this._eligibleEntities = [];
       this.shadowRoot.innerHTML = "<style>" + this._getStyles() + "</style><ha-card>" +
         '<div class="header"><span class="title">' + title + '</span><span class="badge">&#9675; Unavailable</span></div>' +
         '<div class="empty" role="status"><span>Component data unavailable. HACS or Marketplace may still be starting. Check its integration, then run Scan now. This card will retry automatically.</span></div></ha-card>';
       return;
     }
 
+    /* Home Assistant compatibility (#111). Updates whose declared minimum HA
+       version is higher than the running one are held out of the list entirely
+       until the user asks to see them — they cannot be installed, so offering
+       them is the trap this change exists to close. Everything below counts
+       the LISTED set, so the chips and the badge never promise rows that
+       aren't on screen. */
+    const compatMap = this._buildCompatMap();
+    const blockedAll = entities.filter(
+      (eid) => this._compatOf(eid, compatMap).state === "blocked"
+    );
+    const listable = this._showIncompatible
+      ? entities
+      : entities.filter((eid) => this._compatOf(eid, compatMap).state !== "blocked");
+
     /* Classify each update by component type for the filter chips (#69). */
     const typeMap = this._buildTypeMap();
     const cats = {};
-    for (const eid of entities) {
+    for (const eid of listable) {
       const c = this._typeOf(eid, typeMap);
       (cats[c] = cats[c] || []).push(eid);
     }
@@ -641,7 +758,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     if (this._typeFilter !== "all" && !present.includes(this._typeFilter)) {
       this._typeFilter = "all";
     }
-    let shown = this._typeFilter === "all" ? entities : (cats[this._typeFilter] || []);
+    let shown = this._typeFilter === "all" ? listable : (cats[this._typeFilter] || []);
 
     /* AI categories (#67): build the per-update map, tally present categories
        for the chips, then filter/sort the shown list. All a no-op when the AI
@@ -649,7 +766,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     const aiMap = this._buildAiMap();
     const catCounts = {};
     let anyCats = false;
-    for (const eid of entities) {
+    for (const eid of listable) {
       const info = this._aiOf(eid, aiMap);
       if (info.categories && info.categories.length) {
         anyCats = true;
@@ -679,20 +796,34 @@ class UpdateActionTrackerCard extends HTMLElement {
 
     // Remember the currently-visible (filtered) set so "Update selected" acts on it.
     this._shownEntities = shown;
+    // #111: and the subset the bulk service may actually install. Requirement
+    // met only — revealing incompatible rows never grows this set.
+    const eligible = shown.filter(
+      (eid) => this._compatOf(eid, compatMap).state === "met"
+    );
+    this._eligibleEntities = eligible;
+    const shownBlocked = shown.filter(
+      (eid) => this._compatOf(eid, compatMap).state === "blocked"
+    ).length;
+    const shownUnknown = shown.length - eligible.length - shownBlocked;
     const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
 
     let contentHtml;
     if (entities.length === 0) {
       contentHtml = '<div class="empty"><ha-icon icon="mdi:check-circle-outline"></ha-icon><span>All custom components are up to date!</span></div>';
+    } else if (shown.length === 0 && listable.length === 0 && blockedAll.length > 0) {
+      // Everything pending needs a newer Home Assistant. Say so, rather than
+      // leaving an empty card that looks like nothing is waiting.
+      contentHtml = '<div class="empty"><span>Every pending update needs a newer Home Assistant than this system runs. Use &ldquo;Show incompatible&rdquo; to see which.</span></div>';
     } else if (shown.length === 0) {
       contentHtml = '<div class="empty"><span>No updates match this filter.</span></div>';
     } else {
-      contentHtml = shown.map((eid) => this._renderItem(eid, aiMap)).join("");
+      contentHtml = shown.map((eid) => this._renderItem(eid, aiMap, compatMap)).join("");
     }
 
     /* Filter chips - only when there's more than one type to pick between. */
     let filtersHtml = "";
-    if (entities.length > 0 && present.length > 1) {
+    if (listable.length > 0 && present.length > 1) {
       const labels = { integration: "Integrations", card: "Cards", theme: "Themes", other: "Other" };
       const order = ["integration", "card", "theme", "other"];
       const chip = (key, lbl, n) =>
@@ -700,7 +831,7 @@ class UpdateActionTrackerCard extends HTMLElement {
         uatEscapeHtml(lbl) + ' <span class="chip-count">' + n + "</span></button>";
       filtersHtml =
         '<div class="filters">' +
-        chip("all", "All", entities.length) +
+        chip("all", "All", listable.length) +
         order.filter((c) => present.includes(c))
              .map((c) => chip(c, labels[c] || c, cats[c].length))
              .join("") +
@@ -710,7 +841,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     /* Category filter chips + sort toggle (#67) — only when the AI feature has
        produced categories. Multiple categories per update are supported. */
     let catFiltersHtml = "";
-    if (entities.length > 0 && anyCats) {
+    if (listable.length > 0 && anyCats) {
       const catOrder = ["Bug fixes", "New features", "Documentation", "Translations", "Breaking changes", "Dependencies", "Other"];
       const ordered = catOrder.filter((c) => presentCats.includes(c))
         .concat(presentCats.filter((c) => !catOrder.includes(c)).sort());
@@ -722,7 +853,7 @@ class UpdateActionTrackerCard extends HTMLElement {
         '<ha-icon icon="mdi:sort-alphabetical-variant"></ha-icon> Sort</button>';
       catFiltersHtml =
         '<div class="filters cat-filters">' +
-        catChip("all", "All categories", entities.length) +
+        catChip("all", "All categories", listable.length) +
         ordered.map((c) => catChip(c, c, catCounts[c])).join("") +
         sortChip +
         "</div>";
@@ -746,26 +877,78 @@ class UpdateActionTrackerCard extends HTMLElement {
         : "";
 
     const badgeClass = entities.length > 0 ? "pending" : "clean";
-    const badgeText = entities.length > 0
-      ? entities.length + " update" + (entities.length > 1 ? "s" : "")
-      : "Up to date";
+    // #111: "Up to date" is reserved for genuinely nothing pending. When every
+    // pending update is held back the badge says so rather than claiming calm.
+    const badgeText = listable.length > 0
+      ? listable.length + " update" + (listable.length > 1 ? "s" : "")
+      : (entities.length > 0 ? "None installable" : "Up to date");
+
+    /* #111: the header says how many are being held back, so the count in the
+       pending badge is never quietly short of the real number of updates. */
+    let badgesHtml = '<span class="badge ' + badgeClass + '">' + badgeText + '</span>';
+    if (blockedAll.length > 0) {
+      badgesHtml =
+        '<span class="header-badges">' + badgesHtml +
+        '<span class="badge blocked"><span class="glyph blocked"></span> ' +
+        blockedAll.length + ' incompatible</span></span>';
+    }
+
+    /* #111: the reveal switch and, beside it, why those rows are not listed. */
+    let compatBarHtml = "";
+    if (blockedAll.length > 0) {
+      const haVer = this._runningHaVersion(compatMap);
+      compatBarHtml =
+        '<div class="compat-bar">' +
+        '<button class="chip compat-chip' + (this._showIncompatible ? " active" : "") +
+        '" data-compat-reveal="1">' +
+        (this._showIncompatible ? "Showing incompatible" : "Show incompatible") +
+        ' <span class="chip-count">' + blockedAll.length + '</span></button>' +
+        '<span class="compat-hint">' +
+        (this._showIncompatible
+          ? "They cannot be installed from this card."
+          : "Hidden: they need a newer Home Assistant" +
+            (haVer ? " than " + uatEscapeHtml(haVer) : "") + ".") +
+        '</span></div>';
+    }
+
+    /* #111: the button says how many it will install; the line beside it says
+       why the rest are out. Both quote the eligible set, never the visible one. */
+    const bulkLabel = eligible.length === shown.length
+      ? (filtered
+          ? 'Update selected (' + shown.length + ')'
+          : 'Update all (' + shown.length + ')')
+      : 'Update ' + eligible.length + ' of ' + shown.length;
+    const outParts = [];
+    if (shownBlocked > 0) {
+      outParts.push('<span class="glyph blocked"></span> ' + shownBlocked + ' blocked');
+    }
+    if (shownUnknown > 0) {
+      outParts.push(
+        '<span class="glyph unknown"></span> ' + shownUnknown +
+        (shownBlocked > 0 ? " requirement unknown" : " skipped — requirement unknown")
+      );
+    }
+    const bulkHintHtml = outParts.length
+      ? '<span class="compat-hint">' + outParts.join(" · ") + "</span>"
+      : "";
 
     this.shadowRoot.innerHTML =
       "<style>" + this._getStyles() + "</style>" +
       '<ha-card>' +
       '<div class="header">' +
       '<span class="title">' + title + '</span>' +
-      '<span class="badge ' + badgeClass + '">' + badgeText + '</span>' +
+      badgesHtml +
       '</div>' +
       filtersHtml +
       catFiltersHtml +
+      compatBarHtml +
       (shown.length > 0
         ? '<div class="update-all-bar">' +
+          bulkHintHtml +
           aiBtnHtml +
-          '<button class="btn btn-update-all" data-action="update-all">' +
-          (filtered
-            ? 'Update selected (' + shown.length + ')'
-            : 'Update all (' + entities.length + ')') +
+          '<button class="btn btn-update-all" data-action="update-all"' +
+          (eligible.length === 0 ? " disabled" : "") + '>' +
+          bulkLabel +
           '</button></div>'
         : '') +
       '<div class="items">' + contentHtml + '</div>' +
@@ -774,7 +957,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     this._bindEvents();
   }
 
-  _renderItem(entityId, aiMap) {
+  _renderItem(entityId, aiMap, compatMap) {
     const state = this._hass.states[entityId];
     if (!state) return "";
     const attrs = state.attributes;
@@ -792,6 +975,31 @@ class UpdateActionTrackerCard extends HTMLElement {
         ai.categories.map((c) => '<span class="cat-badge">' + uatEscapeHtml(c) + "</span>").join("") +
         "</div>"
       : "";
+
+    /* #111: every row states its Home Assistant requirement — met, blocked, or
+       unknown. None is silent: a row with no line would make absence mean
+       "compatible", and an update whose requirement could not be read must
+       never look like one that was checked and cleared. */
+    const req = this._compatOf(entityId, compatMap);
+    const reqVer = req.required ? uatEscapeHtml(String(req.required)) : "";
+    const haVer = req.installed ? uatEscapeHtml(String(req.installed)) : "";
+    const isBlocked = req.state === "blocked";
+    const isUnknown = req.state !== "blocked" && req.state !== "met";
+    let compatLineHtml;
+    if (isBlocked) {
+      compatLineHtml =
+        '<div class="compat-line blocked"><span class="glyph blocked"></span> ' +
+        '<span>Needs Home Assistant ' + reqVer +
+        (haVer ? " — you have " + haVer : "") + "</span></div>";
+    } else if (req.state === "met") {
+      compatLineHtml =
+        '<div class="compat-line ok"><span class="glyph met"></span> ' +
+        '<span>Needs Home Assistant ' + reqVer + ' — you have it</span></div>';
+    } else {
+      compatLineHtml =
+        '<div class="compat-line unknown"><span class="glyph unknown"></span> ' +
+        '<span>Requirement unknown</span></div>';
+    }
 
     const pictureHtml = picture
       ? '<img class="entity-pic" src="' + uatEscapeHtml(picture) + '" alt="" />'
@@ -822,12 +1030,14 @@ class UpdateActionTrackerCard extends HTMLElement {
     const btnDisabled = disableButtons ? " disabled" : "";
 
     let html =
-      '<div class="item' + (progress ? " updating" : "") + '" data-entity="' + entityId + '">' +
+      '<div class="item' + (progress ? " updating" : "") + (isBlocked ? " blocked" : "") +
+      '" data-entity="' + entityId + '">' +
       '<div class="item-header" data-toggle="' + entityId + '">' +
       pictureHtml +
       '<div class="item-info">' +
       '<div class="item-name" title="' + uatAttr(name) + '">' + name + '</div>' +
       '<div class="item-version" title="' + uatAttr(versionText) + '">' + versionText + '</div>' +
+      compatLineHtml +
       catBadgesHtml +
       '</div>' +
       '<ha-icon class="expand-icon' + (isExpanded ? " open" : "") + '" icon="mdi:chevron-down"></ha-icon>' +
@@ -838,6 +1048,39 @@ class UpdateActionTrackerCard extends HTMLElement {
     }
 
     if (isExpanded) {
+      /* #111: the warning comes first — before the summary and the release
+         notes — because it decides whether the rest is worth reading.
+         The wording stays honest about where the requirement came from: the
+         component's own HACS manifest is the only place this card reads it. */
+      if (isBlocked) {
+        html +=
+          '<div class="compat-warn">' +
+          '<span class="glyph blocked"></span>' +
+          '<span class="warn-body">' +
+          '<strong>Version ' + latestVer + ' needs Home Assistant ' + reqVer + '.</strong> ' +
+          (haVer ? "You are on " + haVer + ", so " : "This system is older, so ") +
+          'this card will not install it. Update Home Assistant first, or leave ' +
+          'this one for now.' +
+          '<span class="warn-why">Stated by the component itself, in the HACS ' +
+          'manifest it ships.</span>' +
+          '</span></div>';
+      } else if (isUnknown) {
+        const why = req.reason === "unreadable"
+          ? "The component states a requirement this card cannot compare" +
+            (reqVer ? " (&ldquo;" + reqVer + "&rdquo;)" : "") + "."
+          : req.reason === "ha_unreadable"
+            ? "This Home Assistant's own version could not be compared, so the check could not run."
+            : "The component's HACS manifest names no minimum Home Assistant version.";
+        html +=
+          '<div class="compat-warn unknown">' +
+          '<span class="glyph unknown"></span>' +
+          '<span class="warn-body">' +
+          '<strong>Version ' + latestVer + ' does not say which Home Assistant it needs.</strong> ' +
+          'That is not the same as saying it works on ' +
+          (haVer ? haVer : "this version") + '. It may install and then fail to load.' +
+          '<span class="warn-why">' + why + '</span>' +
+          '</span></div>';
+      }
       if (ai.summary) {
         html +=
           '<div class="ai-summary">' +
@@ -857,12 +1100,37 @@ class UpdateActionTrackerCard extends HTMLElement {
       if (releaseUrl) {
         html += '<div class="release-link"><a href="' + uatEscapeHtml(releaseUrl) + '" target="_blank" rel="noopener noreferrer">View on GitHub</a></div>';
       }
-      html +=
-        '<div class="actions">' +
-        '<button class="btn btn-skip" data-action="skip" data-entity="' + entityId + '"' + btnDisabled + '>Skip</button>' +
-        '<button class="btn btn-update" data-action="update" data-entity="' + entityId + '"' + btnDisabled + '>Update</button>' +
-        '<button class="btn btn-action" data-action="update_action" data-entity="' + entityId + '"' + btnDisabled + '>Update & Action</button>' +
-        '</div>';
+      /* #111: an unknown requirement is installable, but only deliberately —
+         one tick, which _toggleExpand forgets when the row closes. */
+      const acked = !!this._ackUnknown[entityId];
+      if (isUnknown) {
+        html +=
+          '<div class="compat-ack" data-ack="' + entityId + '" role="checkbox" tabindex="0" ' +
+          'aria-checked="' + (acked ? "true" : "false") + '">' +
+          '<span class="box' + (acked ? " checked" : "") + '">' + (acked ? "&#10003;" : "") + '</span>' +
+          '<span>I understand the requirement is unknown — install ' + latestVer +
+          ' anyway</span></div>';
+      }
+
+      if (isBlocked) {
+        /* No Update button at all, not a disabled one: there is nothing to
+           click at and wonder about. Skip stays — dismissing it is still
+           useful — and the sentence says what would unblock it. */
+        html +=
+          '<div class="actions">' +
+          '<button class="btn btn-skip" data-action="skip" data-entity="' + entityId + '"' + btnDisabled + '>Skip</button>' +
+          '<span class="blocked-why">Installing is blocked until Home Assistant is ' +
+          reqVer + ' or newer.</span>' +
+          '</div>';
+      } else {
+        const installDisabled = (disableButtons || (isUnknown && !acked)) ? " disabled" : "";
+        html +=
+          '<div class="actions">' +
+          '<button class="btn btn-skip" data-action="skip" data-entity="' + entityId + '"' + btnDisabled + '>Skip</button>' +
+          '<button class="btn btn-update" data-action="update" data-entity="' + entityId + '"' + installDisabled + '>Update</button>' +
+          '<button class="btn btn-action" data-action="update_action" data-entity="' + entityId + '"' + installDisabled + '>Update & Action</button>' +
+          '</div>';
+      }
     }
 
     html += '</div>';
@@ -975,6 +1243,28 @@ class UpdateActionTrackerCard extends HTMLElement {
         self._doRender();
       });
     });
+    /* #111: reveal/hide the incompatible updates. */
+    const compatChip = this.shadowRoot.querySelector(".chip[data-compat-reveal]");
+    if (compatChip) {
+      compatChip.addEventListener("click", function(e) {
+        e.stopPropagation();
+        self._showIncompatible = !self._showIncompatible;
+        self._doRender();
+      });
+    }
+    /* #111: the unknown-requirement acknowledgement. */
+    this.shadowRoot.querySelectorAll("[data-ack]").forEach(function(row) {
+      const toggle = function(e) {
+        e.stopPropagation();
+        const eid = row.getAttribute("data-ack");
+        self._ackUnknown[eid] = !self._ackUnknown[eid];
+        self._doRender();
+      };
+      row.addEventListener("click", toggle);
+      row.addEventListener("keydown", function(e) {
+        if (e.key === " " || e.key === "Enter") toggle(e);
+      });
+    });
     const sortChip = this.shadowRoot.querySelector(".chip[data-catsort]");
     if (sortChip) {
       sortChip.addEventListener("click", function(e) {
@@ -1061,16 +1351,96 @@ class UpdateActionTrackerCard extends HTMLElement {
       ".release-link { margin:0 0 8px 52px; font-size:0.8em; }",
       ".release-link a { color:var(--uat-accent); text-decoration:none; }",
       ".release-link a:hover { text-decoration:underline; }",
-      ".actions { display:flex; gap:8px; padding:0 0 12px; margin-left:52px; }",
+      // #111: wraps, so a blocked row's explanation sits under its Skip button
+      // at 380px instead of being squeezed off the edge.
+      ".actions { display:flex; gap:8px; padding:0 0 12px; margin-left:52px; flex-wrap:wrap; align-items:center; }",
       ".btn { border:none; border-radius:8px; padding:8px 16px; font-size:0.85em; font-weight:500; cursor:pointer; transition:opacity 0.15s; color:#fff; }",
       ".btn:hover:not(:disabled) { opacity:0.85; }",
       ".btn:disabled { opacity:0.5; cursor:not-allowed; }",
       ".btn-skip { background:var(--uat-secondary); }",
       ".btn-update { background:var(--uat-accent); }",
       ".btn-action { background:var(--uat-green); }",
-      ".update-all-bar { display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px; }",
+      ".update-all-bar { display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px; align-items:center; flex-wrap:wrap; }",
       ".btn-update-all { background:var(--uat-green); font-weight:600; }",
       ".btn-ai { background:var(--uat-accent); margin-right:auto; }",
+
+      /* -- Home Assistant compatibility (#111) ------------------------ *
+       * Status is carried by a shape glyph plus words, never by colour
+       * alone (house rule 9 — the owner is colour-blind). The glyphs match
+       * the rest of the fleet: ● met, ◐ needs attention, ○ not known.
+       */
+
+      /* The reveal chip sits on its own row under the type/category filters
+         so it reads as a view switch rather than another type of update. */
+      ".compat-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:-4px 0 12px; }",
+      ".chip.compat-chip { font-weight:600; }",
+      ".chip.compat-chip.active { background:var(--uat-orange); border-color:var(--uat-orange); color:#fff; }",
+      ".compat-hint { font-size:0.78em; color:var(--uat-secondary); }",
+      // The glyphs inherit currentColor, so without this the "N blocked" mark
+      // in the hint line would be grey while the same mark in the badge and in
+      // each row is orange — the same state drawn two ways.
+      ".compat-hint .glyph.blocked { color:var(--uat-orange); }",
+      ".update-all-bar .compat-hint { margin-right:auto; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }",
+
+      /* Header badge for the blocked count — outlined, so it never reads as
+         a second "N updates" pill. */
+      ".badge.blocked { background:transparent; color:var(--uat-orange); border:1px solid var(--uat-orange); }",
+      ".header-badges { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }",
+
+      /* The per-row requirement line, directly under the version line.
+       *
+       * EVERY row carries one of the three states — ● met, ◐ blocked,
+       * ○ unknown. A row with no line at all would make silence mean
+       * "compatible", which is the one thing this change must never do: an
+       * update whose requirement could not be read must not be
+       * indistinguishable from one that was checked and cleared. So "met" is
+       * stated out loud rather than implied by absence.
+       *
+       * Unlike the name and version lines above it, this one WRAPS rather
+       * than ellipsising: "Needs Home Assistant 2026.11.0 — you have
+       * 2026.10…" cut off at 380px would hide the number the whole warning
+       * exists to show.
+       */
+      ".compat-line { display:flex; align-items:flex-start; gap:5px; font-size:0.76em; line-height:1.35; margin-top:3px; white-space:normal; }",
+
+      /* The three state marks are DRAWN, not typed. ● ◐ ○ as text characters
+       * depend on a font the client happens to have, and the half-filled one
+       * is the weak link: measured in this change's own design preview,
+       * U+25D0 came out roughly a third the size of the other two and read as
+       * a stray wedge rather than a sibling shape. That destroys the single
+       * distinction a colour-blind reader is meant to rely on (house rule 9).
+       * A circle built from a border plus a background renders identically on
+       * every platform, at exactly the same size in all three states.
+       */
+      ".glyph { display:inline-block; width:0.72em; height:0.72em; box-sizing:border-box; border:1.5px solid currentColor; border-radius:50%; flex-shrink:0; position:relative; top:0.14em; }",
+      ".glyph.met { background:currentColor; }",
+      ".glyph.blocked { background:linear-gradient(to right, currentColor 50%, transparent 50%); }",
+      ".glyph.unknown { background:transparent; }",
+      ".compat-line.blocked { color:var(--uat-orange); font-weight:600; }",
+      ".compat-line.unknown { color:var(--uat-secondary); }",
+      ".compat-line.ok { color:var(--uat-secondary); }",
+
+      /* A revealed, blocked row is dimmed and marked down its leading edge,
+         so it is distinguishable from an installable row without hue. */
+      ".item.blocked { background:rgba(255,152,0,0.07); box-shadow:inset 3px 0 0 0 var(--uat-orange); padding-left:9px; margin-left:-12px; }",
+      ".item.blocked .item-name, .item.blocked .item-version { opacity:0.8; }",
+
+      /* The expanded warning panel. Indented to 52px like notes and actions. */
+      ".compat-warn { display:flex; gap:8px; margin:0 0 8px 52px; padding:10px 12px; border-radius:8px; font-size:0.84em; line-height:1.45; background:rgba(255,152,0,0.14); border-left:3px solid var(--uat-orange); color:var(--uat-primary); }",
+      ".compat-warn.unknown { background:rgba(127,127,127,0.12); border-left-color:var(--uat-secondary); }",
+      ".compat-warn .glyph { width:0.85em; height:0.85em; top:0.22em; }",
+      ".compat-warn strong { font-weight:600; }",
+      ".compat-warn .warn-body { min-width:0; }",
+      ".compat-warn .warn-why { display:block; margin-top:4px; color:var(--uat-secondary); font-size:0.94em; }",
+
+      /* The acknowledgement for an unknown requirement. */
+      ".compat-ack { display:flex; align-items:flex-start; gap:8px; margin:0 0 10px 52px; font-size:0.84em; line-height:1.4; color:var(--uat-primary); cursor:pointer; }",
+      ".compat-ack .box { display:inline-block; width:16px; height:16px; border:2px solid var(--uat-secondary); border-radius:3px; flex-shrink:0; margin-top:1px; }",
+      ".compat-ack .box.checked { border-color:var(--uat-accent); background:var(--uat-accent); color:#fff; text-align:center; line-height:14px; font-size:12px; font-weight:700; }",
+
+      /* A blocked row's Update buttons are replaced by a plain explanation,
+         so there is no disabled button to click at and wonder about. */
+      ".actions .blocked-why { font-size:0.82em; color:var(--uat-secondary); align-self:center; }",
     ].join("\n");
   }
 }

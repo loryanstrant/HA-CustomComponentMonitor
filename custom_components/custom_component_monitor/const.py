@@ -20,6 +20,15 @@ ATTR_UPDATES = "updates"
 ATTR_CATEGORIES = "categories"
 ATTR_SUMMARY = "summary"
 ATTR_ENTITY_ID = "entity_id"
+# Per-update Home Assistant version requirement (#111). The repository's
+# hacs.json "homeassistant" key compared against the running HA, as
+# {"state": met|blocked|unknown, "required", "installed", "reason"}. Every row
+# carries one: "unknown" is an answer, never an absent key.
+ATTR_HA_REQUIREMENT = "ha_requirement"
+# Small recorded scalars so an automation can act on "3 updates need a newer
+# Home Assistant" without parsing the unrecorded updates list.
+ATTR_UPDATES_BLOCKED = "updates_blocked"
+ATTR_UPDATES_UNKNOWN_REQUIREMENT = "updates_unknown_requirement"
 # AI run status, surfaced on sensor.hacs_updates (#91)
 ATTR_AI_ENABLED = "ai_enabled"
 ATTR_AI_PENDING = "ai_pending"

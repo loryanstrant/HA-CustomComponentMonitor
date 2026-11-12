@@ -18,6 +18,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -53,6 +54,7 @@ from .const import (
     ATTR_DISMISSED_COUNT,
     ATTR_ENTITY_ID,
     ATTR_EXCLUDED_COMPONENTS,
+    ATTR_HA_REQUIREMENT,
     ATTR_HIDDEN,
     ATTR_HIDDEN_COUNT,
     ATTR_HIDDEN_TRUNCATED,
@@ -65,6 +67,8 @@ from .const import (
     ATTR_TOTAL_NEW,
     ATTR_UNUSED_COMPONENTS,
     ATTR_UPDATES,
+    ATTR_UPDATES_BLOCKED,
+    ATTR_UPDATES_UNKNOWN_REQUIREMENT,
     ATTR_USED_COMPONENTS,
     CATEGORY_MAP,
     CONF_AI_CATEGORIZATION_ENABLED,
@@ -102,6 +106,14 @@ from .const import (
     SENSOR_UNUSED_FRONTEND,
     SENSOR_UNUSED_INTEGRATIONS,
     SENSOR_UNUSED_THEMES,
+)
+from .compat import (
+    STATE_BLOCKED,
+    STATE_UNKNOWN,
+    block_sentence,
+    ha_requirement,
+    is_blocked,
+    strictest,
 )
 from .countries import CountryVerdict, classify, scope_is_foreign
 from .hacs_sync import async_sync_hacs_new
@@ -1330,6 +1342,28 @@ class ComponentScanner:
                 index[full_name] = repo.get("category", "")
         return index
 
+    @staticmethod
+    def _installed_manifest_index(
+        hacs_repos: dict[str, Any]
+    ) -> dict[str, dict[str, Any]]:
+        """Map ``owner/repo`` to its ``hacs.json``, for every installed repo.
+
+        The companion to :meth:`_installed_repo_index`, for the same reason
+        (#111): a live-only update has no snapshot row, so without this every
+        one of them would report "requirement unknown" — which is a lie when
+        the repository declares a minimum Home Assistant version and the
+        snapshot simply hasn't caught up yet.
+        """
+        index: dict[str, dict[str, Any]] = {}
+        for repo in hacs_repos.values():
+            if not isinstance(repo, dict) or not repo.get("installed", False):
+                continue
+            full_name = str(repo.get("full_name") or "").lower()
+            manifest = repo.get("repository_manifest")
+            if full_name and isinstance(manifest, dict):
+                index[full_name] = manifest
+        return index
+
     def _reconcile_updates(
         self,
         updates: list[dict[str, Any]],
@@ -1400,6 +1434,7 @@ class ComponentScanner:
 
         # Live updates the snapshot hasn't caught up with yet.
         repo_categories = self._installed_repo_index(hacs_repos)
+        repo_manifests = self._installed_manifest_index(hacs_repos)
         for entry in live:
             if not entry["on"] or entry["entity_id"] in matched:
                 continue
@@ -1415,6 +1450,9 @@ class ComponentScanner:
                     "current_version": entry["installed_version"],
                     "available_version": entry["latest_version"],
                     ATTR_ENTITY_ID: entry["entity_id"],
+                    ATTR_HA_REQUIREMENT: ha_requirement(
+                        repo_manifests.get(key), HA_VERSION
+                    ),
                 }
             )
 
@@ -1461,6 +1499,9 @@ class ComponentScanner:
                     ),
                     "current_version": current_version,
                     "available_version": available_version,
+                    # The requirement of the *offered* update, read from the
+                    # repository's hacs.json (#111).
+                    ATTR_HA_REQUIREMENT: ha_requirement(repo_manifest, HA_VERSION),
                 }
             )
 
@@ -1470,7 +1511,16 @@ class ComponentScanner:
 
         # Sort alphabetically by type then name
         updates.sort(key=lambda c: (c["type"], c["name"].lower()))
-        return {"count": len(updates), "updates": updates}
+        states = [
+            (item.get(ATTR_HA_REQUIREMENT) or {}).get("state", STATE_UNKNOWN)
+            for item in updates
+        ]
+        return {
+            "count": len(updates),
+            "updates": updates,
+            "blocked": states.count(STATE_BLOCKED),
+            "unknown_requirement": states.count(STATE_UNKNOWN),
+        }
 
     # -- new in HACS (#95) ----------------------------------------------------
 
@@ -2361,6 +2411,51 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for item in self.data.get("updates", {}).get("updates", [])
             if item.get(ATTR_ENTITY_ID)
         }
+
+    def update_requirement(self, entity_id: str) -> dict[str, Any] | None:
+        """The Home Assistant version requirement of one update row (#111).
+
+        ``None`` when the last scan doesn't know this entity at all — which is
+        not the same as "no requirement", and callers must not read it as a
+        clearance.
+
+        More than one row can claim the same entity when the reconciler's
+        name/slug fallback matches two components to it; the strictest claim
+        wins rather than whichever row was sorted first. See
+        :func:`compat.strictest`.
+        """
+        if not self.data:
+            return None
+        claims = [
+            item.get(ATTR_HA_REQUIREMENT)
+            for item in self.data.get("updates", {}).get("updates", [])
+            if item.get(ATTR_ENTITY_ID) == entity_id
+        ]
+        if not claims:
+            return None
+        return strictest(claims)
+
+    def update_block_reason(self, entity_id: str) -> str | None:
+        """One sentence if this update is blocked, else ``None`` (#111).
+
+        Deliberately only refuses a requirement positively established as
+        unmet. An unknown requirement is not a refusal here: the card's
+        per-row acknowledgement is where the user takes that risk knowingly,
+        and the service cannot see an acknowledgement.
+        """
+        requirement = self.update_requirement(entity_id)
+        if not is_blocked(requirement):
+            return None
+        state = self.hass.states.get(entity_id)
+        name = entity_id
+        if state is not None:
+            name = re.sub(
+                r"\s+update$",
+                "",
+                str(state.attributes.get("friendly_name") or entity_id).strip(),
+                flags=re.IGNORECASE,
+            ) or entity_id
+        return block_sentence(name, requirement or {})
 
     def _recount_pending(self) -> None:
         """Refresh ``ai_pending``/``ai_retryable`` on the data after a run."""
@@ -3590,6 +3685,12 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
             attrs[ATTR_AI_IN_PROGRESS] = self.coordinator.ai_in_progress
             attrs[ATTR_AI_LAST_ERROR] = self.coordinator.ai_last_error
             attrs[ATTR_AI_LAST_RUN] = self.coordinator.ai_last_run
+            # How many of those updates this Home Assistant is too old for,
+            # and how many declared nothing usable (#111).
+            attrs[ATTR_UPDATES_BLOCKED] = data.get("blocked", 0)
+            attrs[ATTR_UPDATES_UNKNOWN_REQUIREMENT] = data.get(
+                "unknown_requirement", 0
+            )
 
         if "last_scan" in self.coordinator.data:
             attrs["last_scan"] = self.coordinator.data["last_scan"]
