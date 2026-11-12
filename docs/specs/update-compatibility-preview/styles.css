@@ -139,12 +139,33 @@ body {
 .uat .badge.blocked { background:transparent; color:var(--uat-orange); border:1px solid var(--uat-orange); }
 .uat .header-badges { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 
-/* The per-row requirement line, directly under the version line. */
+/* The per-row requirement line, directly under the version line.
+ *
+ * EVERY row carries one of the three states — ● met, ◐ blocked, ○ unknown.
+ * A row with no line at all would make silence mean "compatible", which is
+ * the one thing the brief says must never happen: an update whose requirement
+ * we could not read must not be indistinguishable from one we checked and
+ * cleared. So "met" is stated out loud rather than implied by absence.
+ */
 /* Unlike the name and version lines above it, this one WRAPS rather than
    ellipsising: "Needs Home Assistant 2026.11.0 — you have 2026.10…" cut off at
    380px would hide the number the whole warning exists to show. */
 .uat .compat-line { display:flex; align-items:flex-start; gap:5px; font-size:0.76em; line-height:1.35; margin-top:3px; white-space:normal; }
-.uat .compat-line .glyph { font-size:1.05em; line-height:1.35; flex-shrink:0; }
+
+/* The three state marks are DRAWN, not typed.
+ *
+ * ● ◐ ○ as text characters depend on a font the client happens to have, and
+ * the half-filled one is the weak link: measured in this preview's own render,
+ * U+25D0 came out roughly a third the size of the other two and read as a
+ * stray wedge rather than as a sibling shape. That destroys the single
+ * distinction a colour-blind reader is meant to rely on (house rule 9).
+ * A circle built from a border plus a background renders identically on
+ * every platform, at exactly the same size in all three states.
+ */
+.uat .glyph { display:inline-block; width:0.72em; height:0.72em; box-sizing:border-box; border:1.5px solid currentColor; border-radius:50%; flex-shrink:0; position:relative; top:0.14em; }
+.uat .glyph.met { background:currentColor; }
+.uat .glyph.blocked { background:linear-gradient(to right, currentColor 50%, transparent 50%); }
+.uat .glyph.unknown { background:transparent; }
 .uat .compat-line.blocked { color:var(--uat-orange); font-weight:600; }
 .uat .compat-line.unknown { color:var(--uat-secondary); }
 .uat .compat-line.ok { color:var(--uat-secondary); }
@@ -157,7 +178,7 @@ body {
 /* The expanded warning panel. Indented to 52px like the notes and actions. */
 .uat .compat-warn { display:flex; gap:8px; margin:0 0 8px 52px; padding:10px 12px; border-radius:8px; font-size:0.84em; line-height:1.45; background:rgba(255,152,0,0.14); border-left:3px solid var(--uat-orange); color:var(--uat-primary); }
 .uat .compat-warn.unknown { background:rgba(127,127,127,0.12); border-left-color:var(--uat-secondary); }
-.uat .compat-warn .glyph { font-size:1.1em; line-height:1.3; flex-shrink:0; }
+.uat .compat-warn .glyph { width:0.85em; height:0.85em; top:0.22em; }
 .uat .compat-warn strong { font-weight:600; }
 .uat .compat-warn a { color:var(--uat-accent); }
 .uat .compat-warn .warn-body { min-width:0; }
