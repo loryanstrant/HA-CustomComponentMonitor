@@ -28,9 +28,12 @@ by navgen (`tools/navgen/navgen repo` in dev-standards) and refreshed nightly.
 
 CI and releases for this repo run on the **GitHub** mirror; Gitea Actions is
 switched off for it. The mirror is a one-way push authenticated by a token
-without `workflow` scope, so GitHub refuses any push whose commits touch
+without `workflow` scope, so GitHub refuses any push whose net effect changes
 `.github/workflows/*` — **do not edit `.github/workflows/validate.yaml` or
-`release.yaml` from a session.** One such commit blocks the mirror for every
-later push, including release tags, and reverting it does not clear the block
-because the check is per commit. Run the card commands above before tagging a
-release instead. See the 2026-11-12 entry in [DECISIONS.md](DECISIONS.md).
+`release.yaml` from a session.** The block is clearable but expensive: reverting
+the edit lets `main` through again, because the check is a net diff against the
+ref's old tip (measured 2026-11-12), but any **new** ref created while the
+workflow content still differs — a release tag included — is rejected outright
+and has to be deleted and re-cut afterwards. Run the card commands above before
+tagging a release instead. See the 2026-11-12 entry in
+[DECISIONS.md](DECISIONS.md).

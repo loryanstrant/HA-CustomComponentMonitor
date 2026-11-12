@@ -37,6 +37,7 @@ Lovelace cards. Domain: `custom_component_monitor`.
 
 - Don't commit HA tokens or deploy keys — Gitea Actions secrets only.
 - Don't edit `.github/workflows/*`. CI and releases run on the GitHub mirror,
-  and the mirror's push token has no `workflow` scope — one commit touching a
-  workflow file blocks every later push to GitHub, release tags included, and a
-  revert does not clear it. See AGENTS.md → Validation.
+  and the mirror's push token has no `workflow` scope — GitHub rejects any push
+  whose net effect changes a workflow file, and a release tag cut while one
+  differs is rejected outright and has to be deleted and re-cut. See
+  AGENTS.md → Validation.

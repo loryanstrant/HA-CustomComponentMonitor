@@ -681,12 +681,21 @@ holds the "a blocked update is never installable" guarantee, so adding it to
 This repo's CI and releases live on the **GitHub** mirror — Gitea Actions is
 switched off for it (`has_actions: false`, last run June 2026) — and the mirror is
 a one-way push authenticated by a token with no `workflow` scope, so GitHub refuses
-any push carrying a change to `.github/workflows/*`. The refusal is checked per
-commit rather than against the branch tip, so reverting the edit afterwards does not
-clear it; the commit has to never exist. Until that token is re-minted, a workflow
-file in this repo can only be changed by a human pushing to GitHub directly, and the
-card tests run from the release checklist: `node --check` on every card, then
-`node tests/*.cjs`.
+any push whose net effect changes `.github/workflows/*`. Measured here on
+2026-11-12: the check is a **net diff against the ref's old tip**, not a per-commit
+scan. Once the job was reverted, `main` pushed cleanly (`7355c95..aeb980c`) with both
+the adding and the reverting commit inside the same push. What it does reject is a
+**new ref** — a branch or tag created at a commit whose workflow content differs from
+what GitHub already holds has no old tip to diff against, so the `v1.19.0` tag had to
+be deleted and re-cut on the reverted `main` before it would mirror. Until that token
+is re-minted, a workflow file in this repo can only be changed by a human pushing to
+GitHub directly, and the card tests run from the release checklist: `node --check` on
+every card, then `node tests/*.cjs`.
+
+An earlier version of this paragraph said the check was per commit and that a revert
+could not clear it. That came from a web-search summary and was wrong; the sync log
+above disproved it. Recorded because the wrong version is the one that would have sent
+the next session to re-mint a credential it did not need.
 
 **Lesson:** before adding a CI job, check that this repo's CI is somewhere you can
 actually write to. A mirrored repo has two hosts and only one of them runs the
