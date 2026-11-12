@@ -26,7 +26,8 @@ Lovelace cards. Domain: `custom_component_monitor`.
 - Bump `manifest.json` **version** every release (semver); `domain` matches the
   folder name.
 - Test: `hassfest` + HACS validation, then `pytest` with
-  `pytest-homeassistant-custom-component`.
+  `pytest-homeassistant-custom-component`. The cards have no CI — run
+  `node --check` on each `www/*.js` and `node tests/*.cjs` by hand before a release.
 - Deploy/test via the published release artifact into TEST1/TEST2, not host
   file-copy. Backup + auto-rollback.
 - The `www/*.js` cards are part of the integration's frontend — bump/ship them
@@ -35,3 +36,7 @@ Lovelace cards. Domain: `custom_component_monitor`.
 ## Never
 
 - Don't commit HA tokens or deploy keys — Gitea Actions secrets only.
+- Don't edit `.github/workflows/*`. CI and releases run on the GitHub mirror,
+  and the mirror's push token has no `workflow` scope — one commit touching a
+  workflow file blocks every later push to GitHub, release tags included, and a
+  revert does not clear it. See AGENTS.md → Validation.

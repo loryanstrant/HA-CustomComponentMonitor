@@ -675,9 +675,23 @@ dialog quoting the same number. "Update all" also used to call the service with 
 passes the explicit list, so a hidden update cannot be installed by a button that
 was not offering it.
 
-The card tests were only ever run by hand. `validate.yaml` now runs them (and
-`node --check` on every card) on every push and pull request, because one of them
-is the "a blocked update is never installable" guarantee.
+**Why the card tests are still run by hand.** `tests/test_tracker_card_compat.cjs`
+holds the "a blocked update is never installable" guarantee, so adding it to
+`validate.yaml` looked obvious, and 1.19.0 originally did. It had to come back out.
+This repo's CI and releases live on the **GitHub** mirror — Gitea Actions is
+switched off for it (`has_actions: false`, last run June 2026) — and the mirror is
+a one-way push authenticated by a token with no `workflow` scope, so GitHub refuses
+any push carrying a change to `.github/workflows/*`. The refusal is checked per
+commit rather than against the branch tip, so reverting the edit afterwards does not
+clear it; the commit has to never exist. Until that token is re-minted, a workflow
+file in this repo can only be changed by a human pushing to GitHub directly, and the
+card tests run from the release checklist: `node --check` on every card, then
+`node tests/*.cjs`.
+
+**Lesson:** before adding a CI job, check that this repo's CI is somewhere you can
+actually write to. A mirrored repo has two hosts and only one of them runs the
+workflow — and the credential that mirrors it is a scope boundary you cannot see
+from the diff.
 
 **Lesson:** a compatibility check has three possible answers and the third one is
 the common case. Designing for two means the default — nothing declared — inherits
