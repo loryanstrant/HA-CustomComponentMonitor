@@ -5,12 +5,12 @@
     "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
     "default_branch": "main",
     "languages": {
-      "Python": 31,
-      "JavaScript": 6
+      "Python": 35,
+      "JavaScript": 7
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 91
+    "file_count": 102
   },
   "start_here": {
     "readme": "README.md",
@@ -45,7 +45,7 @@
     {
       "path": ".github/copilot-instructions.md",
       "title": "Copilot instructions — HA-CustomComponentMonitor",
-      "lines": 37,
+      "lines": 42,
       "headings": [
         {
           "level": 2,
@@ -72,7 +72,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 601,
+      "lines": 702,
       "headings": [
         {
           "level": 2,
@@ -168,13 +168,18 @@
           "level": 2,
           "text": "2026-11-09 - Follow the active component store, not a retired file (1.18.0)",
           "anchor": "2026-11-09---follow-the-active-component-store-not-a-retired-file-1180"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-12 — \"Unknown\" is a third answer, not a quiet \"yes\" (1.19.0)",
+          "anchor": "2026-11-12--unknown-is-a-third-answer-not-a-quiet-yes-1190"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 767,
+      "lines": 815,
       "headings": [
         {
           "level": 2,
@@ -442,6 +447,33 @@
       ]
     },
     {
+      "path": "docs/release-notes/1.19.0.md",
+      "title": "1.19.0",
+      "lines": 21,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.19.0",
+          "anchor": "whats-new-in-v1190"
+        },
+        {
+          "level": 3,
+          "text": "Added",
+          "anchor": "added"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
       "path": "docs/specs/card-editor-ha-form.md",
       "title": "Spec — Card editors on ha-form",
       "lines": 148,
@@ -597,6 +629,28 @@
           "level": 2,
           "text": "Addendum — 1.17.4: themes and templates",
           "anchor": "addendum--1174-themes-and-templates"
+        }
+      ]
+    },
+    {
+      "path": "docs/specs/update-compatibility-preview/README.md",
+      "title": "Design preview — Home Assistant compatibility filter",
+      "lines": 55,
+      "headings": [
+        {
+          "level": 2,
+          "text": "The three states, on every row",
+          "anchor": "the-three-states-on-every-row"
+        },
+        {
+          "level": 2,
+          "text": "The bulk-update button names its own scope",
+          "anchor": "the-bulk-update-button-names-its-own-scope"
+        },
+        {
+          "level": 2,
+          "text": "Blocked versus unknown are different refusals",
+          "anchor": "blocked-versus-unknown-are-different-refusals"
         }
       ]
     },
@@ -878,6 +932,71 @@
         ]
       },
       {
+        "path": "custom_components/custom_component_monitor/compat.py",
+        "symbols": [
+          {
+            "kind": "const",
+            "name": "STATE_MET",
+            "parent": "",
+            "signature": "STATE_MET = \"met\""
+          },
+          {
+            "kind": "const",
+            "name": "STATE_BLOCKED",
+            "parent": "",
+            "signature": "STATE_BLOCKED = \"blocked\""
+          },
+          {
+            "kind": "const",
+            "name": "STATE_UNKNOWN",
+            "parent": "",
+            "signature": "STATE_UNKNOWN = \"unknown\""
+          },
+          {
+            "kind": "const",
+            "name": "REASON_NOT_DECLARED",
+            "parent": "",
+            "signature": "REASON_NOT_DECLARED = \"not_declared\""
+          },
+          {
+            "kind": "const",
+            "name": "REASON_UNREADABLE",
+            "parent": "",
+            "signature": "REASON_UNREADABLE = \"unreadable\""
+          },
+          {
+            "kind": "const",
+            "name": "REASON_HA_UNREADABLE",
+            "parent": "",
+            "signature": "REASON_HA_UNREADABLE = \"ha_unreadable\""
+          },
+          {
+            "kind": "function",
+            "name": "declared_min_ha_version",
+            "parent": "",
+            "signature": "declared_min_ha_version(repository_manifest: Any) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "is_blocked",
+            "parent": "",
+            "signature": "is_blocked(requirement: Any) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "strictest",
+            "parent": "",
+            "signature": "strictest(requirements: Any) -> dict[str, Any] | None"
+          },
+          {
+            "kind": "function",
+            "name": "block_sentence",
+            "parent": "",
+            "signature": "block_sentence(name: str, requirement: dict[str, Any]) -> str"
+          }
+        ]
+      },
+      {
         "path": "custom_components/custom_component_monitor/config_flow.py",
         "symbols": [
           {
@@ -1010,6 +1129,24 @@
             "name": "ATTR_ENTITY_ID",
             "parent": "",
             "signature": "ATTR_ENTITY_ID = \"entity_id\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_HA_REQUIREMENT",
+            "parent": "",
+            "signature": "ATTR_HA_REQUIREMENT = \"ha_requirement\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_UPDATES_BLOCKED",
+            "parent": "",
+            "signature": "ATTR_UPDATES_BLOCKED = \"updates_blocked\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_UPDATES_UNKNOWN_REQUIREMENT",
+            "parent": "",
+            "signature": "ATTR_UPDATES_UNKNOWN_REQUIREMENT = \"updates_unknown_requirement\""
           },
           {
             "kind": "const",
@@ -1866,6 +2003,18 @@
           },
           {
             "kind": "function",
+            "name": "update_requirement",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "update_requirement(self, entity_id: str) -> dict[str, Any] | None"
+          },
+          {
+            "kind": "function",
+            "name": "update_block_reason",
+            "parent": "CustomComponentMonitorCoordinator",
+            "signature": "update_block_reason(self, entity_id: str) -> str | None"
+          },
+          {
+            "kind": "function",
             "name": "new_items_ai_last_error",
             "parent": "CustomComponentMonitorCoordinator",
             "signature": "new_items_ai_last_error(self) -> str | None"
@@ -2238,6 +2387,18 @@
           },
           {
             "kind": "const",
+            "name": "put",
+            "parent": "",
+            "signature": "const put = (bucket, key, req) =>"
+          },
+          {
+            "kind": "const",
+            "name": "rank",
+            "parent": "",
+            "signature": "const rank = (r)"
+          },
+          {
+            "kind": "const",
             "name": "chip",
             "parent": "",
             "signature": "const chip = (key, lbl, n)"
@@ -2367,6 +2528,7 @@
     "tests/test_categorise_one.py",
     "tests/test_countries.py",
     "tests/test_generate_summaries.py",
+    "tests/test_ha_compatibility.py",
     "tests/test_hacs_sync.py",
     "tests/test_install_dates.py",
     "tests/test_new_item_taxonomy.py",
@@ -2379,9 +2541,12 @@
     "tests/test_new_items_types.py",
     "tests/test_scan_install_dates.py",
     "tests/test_scan_updates_reconcile.py",
+    "tests/test_scan_updates_requirement.py",
+    "tests/test_service_blocks_incompatible.py",
     "tests/test_setup_and_service.py",
     "tests/test_store.py",
-    "tests/test_tracker_card.cjs"
+    "tests/test_tracker_card.cjs",
+    "tests/test_tracker_card_compat.cjs"
   ],
   "operations": [
     ".github/workflows/release.yaml",
@@ -2395,8 +2560,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "8932cab0d8eb0bed7e54b67a700a9acac812c231",
-    "content_hash": "39f6549249c5e050",
+    "source_commit": "aeb980c05b62819b9e202c55f5371347f3c1b601",
+    "content_hash": "d962ffe7d9576b8e",
     "generator": "navgen"
   }
 }
