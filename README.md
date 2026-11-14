@@ -413,7 +413,7 @@ Every option below is available in the visual editor — no YAML required.
 
 #### Home Assistant compatibility (v1.19.0)
 
-Some component updates need a newer Home Assistant than you're running. The component declares that minimum in its own HACS manifest, and HACS enforces it on install — but nothing showed it to you beforehand, so an install either failed with no visible reason or (as with Microsoft 365 — Calendar) went ahead and had to be rolled back by hand.
+Some component updates need a newer Home Assistant than you're running. The component declares that minimum in its own HACS manifest — but nothing showed it to you beforehand, so an install either failed with no visible reason or (as with Microsoft 365 — Calendar) went ahead and had to be rolled back by hand. (HACS's own install gate has the same blind spot described below, via an upstream fix that has never shipped in a release — so HACS will not reliably stop that install either.)
 
 The card now reads that declared minimum for every pending update and compares it with your Home Assistant version. Each update is one of three things:
 
@@ -421,9 +421,11 @@ The card now reads that declared minimum for every pending update and compares i
 |---|---|---|
 | ● | **Met** — the declared minimum is satisfied | Lists it normally. The row says `Needs Home Assistant 2025.6.0 — you have it` |
 | ◐ | **Needs a newer Home Assistant** | **Hidden by default.** The header shows `◐ N incompatible` and a **Show incompatible** switch reveals them, dimmed and marked. A revealed row has **no Update button at all** — only **Skip**, and a line saying `Installing is blocked until Home Assistant is 2026.11.0 or newer.` |
-| ○ | **Requirement unknown** — nothing usable declared | Stays listed, labelled `Requirement unknown`, and **never called compatible**. Left out of bulk installs. Installing it needs a tick on that row (`I understand the requirement is unknown — install 1.5.0 anyway`), which is forgotten as soon as the row closes |
+| ○ | **Requirement unknown** — nothing usable declared, or (from v1.21.0) the offered version's manifest could not be read this scan | Stays listed, labelled `Requirement unknown` when nothing was declared and `Requirement couldn't be checked` when the read failed, and **never called compatible** either way. Left out of bulk installs. Installing it needs a tick on that row (`I understand the requirement is unknown — install 1.5.0 anyway`), which is forgotten as soon as the row closes |
 
 The three marks are drawn shapes paired with words, so nothing depends on being able to tell colours apart.
+
+**In v1.19.0 and v1.20.0 this requirement could be wrong, in either direction.** HACS keeps exactly one `hacs.json` snapshot per repository, with no record of which release it describes — so a newly-offered update inherited the *installed* version's requirement rather than its own, which reads as too lenient when a release raises its minimum and too strict in the rarer case of one lowering it. From v1.21.0 the requirement is re-read from the **offered** version's own `hacs.json`, fetched from that exact tag; a read that fails reports `Requirement couldn't be checked` rather than keeping a stale answer. See [How HACS Updates works](#hacs-updates) for the mechanism.
 
 **The bulk button names its own scope.** It reads **Update all (5)** only when it really will install all five; **Update N of M** when some listed updates are out of scope, with a line beside it breaking down why (`◐ 1 blocked · ○ 2 requirement unknown`). The confirmation dialog quotes the same number. Revealing incompatible updates never increases what the button will install.
 
@@ -843,7 +845,9 @@ That comes from HACS's stored repository data, which is a snapshot written perio
 
 The update card looks for pending `update.*` entities provided by HACS. For **Update & Action**, it calls Home Assistant's `update.install` service and then creates a persistent item in `todo.hacs_update_actions` with release context and release notes when available.
 
-From v1.19.0 each reconciled row also carries `ha_requirement`, read from the installed repository's own `hacs.json` (`homeassistant` key) and compared against the running Home Assistant version. Only version strings that can actually be ordered are trusted — a declared `">=2026.11.0"` or `"latest"` is reported as unknown rather than guessed at — and where two snapshot rows end up claiming the same update entity, the stricter of their two requirements is the one reported. See [Home Assistant compatibility](#home-assistant-compatibility-v1190).
+From v1.19.0 each reconciled row also carries `ha_requirement`, compared against the running Home Assistant version. Only version strings that can actually be ordered are trusted — a declared `">=2026.11.0"` or `"latest"` is reported as unknown rather than guessed at — and where two snapshot rows end up claiming the same update entity, the stricter of their two requirements is the one reported.
+
+v1.19.0 read that requirement from HACS's stored `hacs.json` snapshot — which HACS keeps exactly one copy of per repository, refreshed from whatever version was being downloaded at the time. A newly-offered release does not get its own snapshot; it inherits whatever `homeassistant` value the *previously installed* release left behind. From v1.21.0 the requirement is instead re-read from the **offered** version's own `hacs.json`, fetched from that tag directly — see [Home Assistant compatibility](#home-assistant-compatibility-v1190) for what changed and why.
 
 ## Contributing
 

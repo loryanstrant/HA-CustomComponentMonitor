@@ -118,10 +118,35 @@ not closed.
 - **No published-release install test.** Installing 1.20.0 from the release and
   confirming the cards recover on the real stuck instance is the post-release check,
   and is the user's own install.
-- **Hassfest and the HACS Action have not run.** They are GitHub-side workflows and the
-  branch has not reached the mirror; check them on `main` after the merge is mirrored.
-  The metadata they validate was checked by hand instead, as described above.
+- ~~**Hassfest and the HACS Action have not run.**~~ Resolved after the merge - see
+  *Release outcome* below.
 - Other installed components emit their own warnings in the production log; nothing
   here claims a clean log.
 
-No merge, tag or release was performed at the time of writing.
+## Release outcome
+
+Added after the release, on 14 November 2026 at approximately 19:15 AEDT. Order was the
+one `build-ha-component` requires: merge, tag in Gitea, mirror sync, then publish on
+GitHub against the existing tag - so no GitHub-only tag was created and the 8-hourly
+mirror prune cannot take the release with it.
+
+| Step | Result |
+| --- | --- |
+| Pull request | `#114` merged to `main` as `5caa581` |
+| Tag | `v1.20.0` created in **Gitea** at `5caa581`, then mirrored; GitHub's `refs/tags/v1.20.0^{}` resolves to `5caa581` |
+| Gitea release | created on that tag, for canonical parity |
+| GitHub release | published on the existing tag, id `445136896` |
+| `Validate` workflow (hassfest + HACS Action) | **success** on `main` at `5caa581`, run `43573039599` - the check this note previously recorded as unrun |
+| `Release` workflow | **success**, run `43574685682` |
+| Published asset | `custom_component_monitor.zip`, 286,490 bytes, SHA-256 `ada357903d822d5b9eb5934202f0d03483a1444d6e10b8d02f555371339bb1a5` |
+
+The published zip was downloaded and opened rather than trusted: `manifest.json` reads
+`1.20.0`, all four `CARD_VERSION` constants read `1.20.0`, `sensor.py` contains
+`_handle_scan_failure` and the stale attributes, and all four card modules contain the
+stale notice.
+
+Still outstanding, and only the owner can close it: installing 1.20.0 through HACS on the
+production instance and confirming the four cards come back with numbers. The HACS
+duplicate that jammed the store is untouched, so the store is expected to stay stuck and
+the cards are expected to come back **stale** rather than fresh - which is the fix working,
+not a second fault.

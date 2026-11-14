@@ -790,3 +790,64 @@ nothing to show you", and reaching for it on every exception tells six entities 
 blank over a condition that may not affect the data at all. Separate *the scan failed*
 from *there is nothing to show*, and the user keeps what they already had — with a label
 saying how old it is, which is strictly more information than a blank card.
+
+## 2026-11-14 — A manifest with no record of which release it describes can't judge a different release (1.21.0)
+
+The v1.19.0 compatibility check compared a pending update's declared minimum Home
+Assistant version against the one you're running — but HACS stores exactly one
+`hacs.json` snapshot per repository (`repository_manifest`, in both stores), with no
+field saying which release that snapshot describes. HACS only ever populates the
+`homeassistant` key by reading GitHub for whatever version was being *downloaded* at the
+time; its catalogue feeds (`data-v2.hacs.xyz/{integration,plugin}/data.json`) publish 0 of
+6,279 rows with a `homeassistant` key at all. So when a new release appears, the feed
+refreshes `last_version` and leaves the old release's `homeassistant` value sitting there
+unrefreshed. The check was reading the *installed* version's requirement and labelling
+the *offered* version with it. Observed on this house's production instance across all
+seven pending updates: six agreed by coincidence, and **Microsoft 365 - Calendar v1.14.0**
+did not — cached 2025.6.0 (v1.13.0's minimum) against an actual 2026.11.0, with the
+card's own release notes contradicting its own compatibility line in the same render.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| Where the requirement comes from | **The offered version's own `hacs.json`**, fetched from that exact tag | HACS's stored snapshot, as v1.19.0/1.20.0 did |
+| How long a successful read is trusted | **For the life of the running process** — a tag's contents never change | Re-fetched every scan |
+| What a failed read does to an existing answer | **Reports `target_unreadable`; never keeps the stale cached value** | Falls back to the last value read |
+| What wins when a failed read meets a known `blocked` | **The `blocked` verdict**, every time | Whichever was computed most recently |
+| How much work this adds per scan | **Bounded** — limited concurrency, a per-request timeout, an overall time budget; a failure can't fail the scan | Unlimited fan-out with no budget |
+
+**Why the fix had to be "ask the tag," not "ask HACS harder."** There is no second field
+to read. HACS's own storage genuinely does not know which release its one cached
+`homeassistant` value belongs to, so no amount of re-reading that store produces the
+right answer — the only source that can state what a specific release requires is that
+release's own manifest, which only exists at the ref it shipped on. This is also why
+HACS's own install gate (`repositories/base.py` in 2.0.5) has the identical blind spot: it
+checks the stored manifest regardless of which ref is being installed. A one-line fix for
+it was merged upstream in hacs/integration PR #4652 on 2025-06-10 and has never shipped in
+a release, so HACS itself still will not reliably stop an incompatible install — this
+card's own fetch-the-offered-tag check is the only correct gate in the house right now.
+
+**Why a failed read reports unknown instead of repeating the old value.** Caching only the
+successful reads (never the failures) means a transient fetch error costs nothing but an
+honest `target_unreadable` row this hour and a retry next hour — it can never calcify into
+a wrong answer the way the HACS snapshot did. And because `blocked` still beats
+`target_unreadable` when both exist for a row, a component already known to need a newer
+Home Assistant can't be quietly reclassified as merely "unknown" by one bad fetch.
+
+**The cost it does carry: the scan now touches the network.** The hourly refresh is also
+awaited by the config-entry setup and by the install services when they meet an update the
+last scan hadn't seen, so with GitHub unreachable the whole-pass budget is the worst-case
+delay to starting up and to pressing Update. That is why the budget is 25 s rather than
+something leisurely, and why it is a *whole-pass* bound rather than per request: it is the
+only number that caps what a person waits for. Exceeding it is the safe direction —
+unanswered rows become "couldn't check" and are retried — but a user staring at a button
+is not, so the number stays short. The reads are skipped entirely once each offered tag is
+cached, which is the normal case after the first scan following a new release.
+
+**Lesson:** a cached value with no record of *which version it describes* cannot be used
+to judge a *different* version, no matter how fresh the cache otherwise looks — "last
+refreshed 10 minutes ago" says nothing about which release the content is about. And the
+test suite that shipped with v1.19.0 passed cleanly through all of this, because every
+test built its fixture by handing the manifest and the offered version as the same input
+— the exact assumption production violates the moment a new release appears before the
+next full re-fetch. A fixture that never lets the manifest and the version under test
+disagree can't catch a bug that only exists when they do.

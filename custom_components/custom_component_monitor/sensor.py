@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from aiohttp import ClientError, ClientTimeout
+
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
@@ -21,6 +23,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
@@ -113,14 +116,19 @@ from .const import (
     SENSOR_UNUSED_FRONTEND,
     SENSOR_UNUSED_INTEGRATIONS,
     SENSOR_UNUSED_THEMES,
+    TARGET_MANIFEST_BUDGET,
+    TARGET_MANIFEST_CONCURRENCY,
+    TARGET_MANIFEST_MAX_BYTES,
+    TARGET_MANIFEST_TIMEOUT,
+    TARGET_MANIFEST_URL,
 )
 from .compat import (
-    STATE_BLOCKED,
-    STATE_UNKNOWN,
     block_sentence,
     ha_requirement,
     is_blocked,
+    requirement_counts,
     strictest,
+    target_unreadable_requirement,
 )
 from .countries import CountryVerdict, classify, scope_is_foreign
 from .hacs_sync import async_sync_hacs_new
@@ -228,6 +236,10 @@ class ComponentScanner:
         self._hacs_repositories: dict[str, Any] | None = None
         self.provider: str | None = None
         self._install_dates = install_dates
+        # (owner/repo, tag) -> that tag's own hacs.json (#115). Successes only,
+        # and only for tags still on offer — see
+        # :meth:`async_verify_update_requirements`.
+        self._target_manifest_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
     # -- storage helpers -----------------------------------------------------
 
@@ -1511,8 +1523,11 @@ class ComponentScanner:
                     ),
                     "current_version": current_version,
                     "available_version": available_version,
-                    # The requirement of the *offered* update, read from the
-                    # repository's hacs.json (#111).
+                    # What HACS's stored hacs.json says (#111). That snapshot
+                    # describes whichever release was last downloaded, so this
+                    # is a starting point, not the answer:
+                    # ``async_verify_update_requirements`` re-reads it from the
+                    # release actually on offer (#115).
                     ATTR_HA_REQUIREMENT: ha_requirement(repo_manifest, HA_VERSION),
                 }
             )
@@ -1523,16 +1538,180 @@ class ComponentScanner:
 
         # Sort alphabetically by type then name
         updates.sort(key=lambda c: (c["type"], c["name"].lower()))
-        states = [
-            (item.get(ATTR_HA_REQUIREMENT) or {}).get("state", STATE_UNKNOWN)
-            for item in updates
-        ]
         return {
             "count": len(updates),
             "updates": updates,
-            "blocked": states.count(STATE_BLOCKED),
-            "unknown_requirement": states.count(STATE_UNKNOWN),
+            **requirement_counts(
+                item.get(ATTR_HA_REQUIREMENT) for item in updates
+            ),
         }
+
+    # -- the OFFERED release's requirement (#115) -----------------------------
+
+    async def async_verify_update_requirements(self, updates: dict[str, Any]) -> None:
+        """Re-read each pending update's requirement from the tag on offer.
+
+        :meth:`scan_updates` can only use what HACS stored, and HACS stores one
+        ``hacs.json`` per repository with nothing saying which release it came
+        from — so after a new release appears it still answers for the version
+        already installed. That is #115: Microsoft 365 Calendar v1.14.0 needs
+        Home Assistant 2026.11.0 and was shown as "needs 2025.6.0 — you have
+        it", which is the installed v1.13.0's requirement, on a 2026.10.4
+        house. Six of the other seven pending updates agreed by coincidence,
+        which is exactly why it went unnoticed.
+
+        Kept out of ``scan_updates`` on purpose. That scan reads local storage
+        and must stay offline: it is called from tests and from paths where a
+        network stall would be felt, and a scan that failed because GitHub was
+        slow would lose every count on the dashboard. So the correction is a
+        separate pass over the rows the scan produced, it never raises, and the
+        counts are recomputed from the rows it leaves behind.
+
+        *updates* is mutated in place.
+        """
+        rows = updates.get("updates") or []
+        if not rows:
+            # Still write the counts: they describe the rows, and the rows are
+            # this function's output — a caller must never have to know which
+            # of the two passes last touched them.
+            updates.update(requirement_counts(()))
+            return
+
+        # A row is only verifiable if we can name both the repository and the
+        # tag being offered. ``available_version`` is used verbatim: HACS
+        # reports the tag, and tags keep whatever "v" prefix they shipped with.
+        keyed: list[tuple[dict[str, Any], tuple[str, str] | None]] = []
+        for row in rows:
+            full_name = repo_key(row.get("repository"))
+            ref = str(row.get("available_version") or "").strip()
+            keyed.append((row, (full_name, ref) if full_name and ref else None))
+
+        # Cache successes for the life of the process — a tag's contents never
+        # change — but only for tags still on offer, so an update the user
+        # installs stops being paid for. Failures are never cached, so the next
+        # scan retries them.
+        wanted = {key for _row, key in keyed if key is not None}
+        self._target_manifest_cache = {
+            key: manifest
+            for key, manifest in self._target_manifest_cache.items()
+            if key in wanted
+        }
+        missing = sorted(wanted - self._target_manifest_cache.keys())
+        if missing:
+            try:
+                self._target_manifest_cache.update(
+                    await self._fetch_target_manifests(missing)
+                )
+            except Exception:  # noqa: BLE001 - a scan is worth more than a fetch
+                _LOGGER.exception(
+                    "Could not read the offered releases' hacs.json files; "
+                    "their requirements are reported as unchecked"
+                )
+
+        for row, key in keyed:
+            manifest = self._target_manifest_cache.get(key) if key else None
+            if manifest is not None:
+                row[ATTR_HA_REQUIREMENT] = ha_requirement(manifest, HA_VERSION)
+                continue
+            # Nothing read this scan. The stale answer is NOT kept: ``met``
+            # from the installed version's manifest is precisely the wrong
+            # answer this exists to stop. ``strictest`` with the fresh dict
+            # first means a previously established ``blocked`` still wins
+            # (more restrictive), a stale ``met`` is discarded, and a tie
+            # against another ``unknown`` keeps the honest reason.
+            row[ATTR_HA_REQUIREMENT] = strictest(
+                [
+                    target_unreadable_requirement(HA_VERSION),
+                    row.get(ATTR_HA_REQUIREMENT),
+                ]
+            )
+
+        updates.update(
+            requirement_counts(row.get(ATTR_HA_REQUIREMENT) for row in rows)
+        )
+
+    async def _fetch_target_manifests(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Read ``hacs.json`` at each ``(owner/repo, tag)``, best effort.
+
+        Only an HTTP 200 carrying a JSON object counts as an answer. A 404 is
+        emphatically *not* "this release declares nothing" — the tag may not
+        exist under the name HACS reported, or the repository may keep its
+        manifest elsewhere — and reading it as an empty manifest would turn a
+        blocked update green, which is the fault being fixed. Anything that
+        isn't a clean 200 is simply absent from the result.
+        """
+        session = async_get_clientsession(self.hass)
+        semaphore = asyncio.Semaphore(TARGET_MANIFEST_CONCURRENCY)
+        found: dict[tuple[str, str], dict[str, Any]] = {}
+
+        async def _read_one(key: tuple[str, str]) -> None:
+            full_name, ref = key
+            url = TARGET_MANIFEST_URL.format(full_name=full_name, ref=ref)
+            async with semaphore:
+                try:
+                    async with session.get(
+                        url, timeout=ClientTimeout(total=TARGET_MANIFEST_TIMEOUT)
+                    ) as response:
+                        if response.status != 200:
+                            _LOGGER.debug(
+                                "hacs.json for %s@%s: HTTP %s",
+                                full_name,
+                                ref,
+                                response.status,
+                            )
+                            return
+                        # Bounded, and decoded leniently, for the same reason
+                        # the local bundle scans in this file are: the body is
+                        # a few hundred bytes of JSON if it is what it claims
+                        # to be, and if it is not, neither its size nor its
+                        # encoding should be able to hurt the scan.
+                        raw = b""
+                        async for chunk in response.content.iter_chunked(8192):
+                            raw += chunk
+                            if len(raw) > TARGET_MANIFEST_MAX_BYTES:
+                                _LOGGER.debug(
+                                    "hacs.json for %s@%s is bigger than %d "
+                                    "bytes, so it is not a manifest; ignored",
+                                    full_name,
+                                    ref,
+                                    TARGET_MANIFEST_MAX_BYTES,
+                                )
+                                return
+                except (ClientError, asyncio.TimeoutError, TimeoutError) as err:
+                    _LOGGER.debug(
+                        "hacs.json for %s@%s could not be read: %s",
+                        full_name,
+                        ref,
+                        err,
+                    )
+                    return
+            try:
+                manifest = json.loads(raw.decode("utf-8", errors="ignore"))
+            except ValueError as err:
+                _LOGGER.debug(
+                    "hacs.json for %s@%s is not JSON: %s", full_name, ref, err
+                )
+                return
+            if isinstance(manifest, dict):
+                found[key] = manifest
+
+        tasks = [asyncio.create_task(_read_one(key)) for key in keys]
+        done, pending = await asyncio.wait(tasks, timeout=TARGET_MANIFEST_BUDGET)
+        if pending:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            _LOGGER.debug(
+                "Ran out of time reading %d of %d offered hacs.json files",
+                len(pending),
+                len(tasks),
+            )
+        for task in done:
+            if (err := task.exception()) is not None:
+                _LOGGER.debug("Unexpected error reading an offered hacs.json: %s", err)
+        return found
 
     # -- new in HACS (#95) ----------------------------------------------------
 
@@ -1996,6 +2175,18 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             updates = await self.scanner.scan_updates()
             _LOGGER.debug("Update scan: %d pending updates", updates["count"])
+
+            # The scan can only report what HACS stored, which is the
+            # *installed* version's declared Home Assistant minimum (#115).
+            # Re-read it from the release actually on offer. Never raises, and
+            # a release it cannot read is reported as unchecked rather than
+            # keeping the stale answer.
+            await self.scanner.async_verify_update_requirements(updates)
+            _LOGGER.debug(
+                "Update scan: %d blocked, %d requirement unknown",
+                updates["blocked"],
+                updates["unknown_requirement"],
+            )
 
             # Stamp cached AI summaries + categories on (#67). The AI calls
             # themselves run in a background worker so a cold cache can never
