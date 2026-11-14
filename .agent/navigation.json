@@ -5,12 +5,12 @@
     "description": "A Home Assistant custom integration that monitors your HACS installation for unused custom components, themes, and frontend resources — and now also helps you manage HACS updates that need follow-up action.",
     "default_branch": "main",
     "languages": {
-      "Python": 35,
+      "Python": 36,
       "JavaScript": 7
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 102
+    "file_count": 111
   },
   "start_here": {
     "readme": "README.md",
@@ -72,7 +72,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 702,
+      "lines": 853,
       "headings": [
         {
           "level": 2,
@@ -173,13 +173,23 @@
           "level": 2,
           "text": "2026-11-12 — \"Unknown\" is a third answer, not a quiet \"yes\" (1.19.0)",
           "anchor": "2026-11-12--unknown-is-a-third-answer-not-a-quiet-yes-1190"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-14 — A status flag is not the data, and UpdateFailed is not a diagnosis (1.20.0)",
+          "anchor": "2026-11-14--a-status-flag-is-not-the-data-and-updatefailed-is-not-a-diagnosis-1200"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-14 — A manifest with no record of which release it describes can't judge a different release (1.21.0)",
+          "anchor": "2026-11-14--a-manifest-with-no-record-of-which-release-it-describes-cant-judge-a-different-release-1210"
         }
       ]
     },
     {
       "path": "README.md",
       "title": "Home Assistant Custom Component Monitor",
-      "lines": 815,
+      "lines": 866,
       "headings": [
         {
           "level": 2,
@@ -190,6 +200,11 @@
           "level": 2,
           "text": "HACS and Marketplace compatibility (v1.18.0)",
           "anchor": "hacs-and-marketplace-compatibility-v1180"
+        },
+        {
+          "level": 2,
+          "text": "When a scan fails (v1.20.0)",
+          "anchor": "when-a-scan-fails-v1200"
         },
         {
           "level": 2,
@@ -460,6 +475,55 @@
           "level": 3,
           "text": "Added",
           "anchor": "added"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.20.0.md",
+      "title": "1.20.0",
+      "lines": 18,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.20.0",
+          "anchor": "whats-new-in-v1200"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Added",
+          "anchor": "added"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.21.0.md",
+      "title": "1.21.0",
+      "lines": 14,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.21.0",
+          "anchor": "whats-new-in-v1210"
         },
         {
           "level": 3,
@@ -766,6 +830,100 @@
       ]
     },
     {
+      "path": "docs/verification/stuck-store-1.20.0.md",
+      "title": "Stuck store / stale data - v1.20.0 verification",
+      "lines": 152,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Results",
+          "anchor": "results"
+        },
+        {
+          "level": 2,
+          "text": "Live production evidence (read-only)",
+          "anchor": "live-production-evidence-read-only"
+        },
+        {
+          "level": 2,
+          "text": "Offline card rendering",
+          "anchor": "offline-card-rendering"
+        },
+        {
+          "level": 3,
+          "text": "Stale state - desktop",
+          "anchor": "stale-state---desktop"
+        },
+        {
+          "level": 3,
+          "text": "Stale state - phone",
+          "anchor": "stale-state---phone"
+        },
+        {
+          "level": 2,
+          "text": "Behaviour covered by the Python suite",
+          "anchor": "behaviour-covered-by-the-python-suite"
+        },
+        {
+          "level": 2,
+          "text": "Remaining checks and limits",
+          "anchor": "remaining-checks-and-limits"
+        },
+        {
+          "level": 2,
+          "text": "Release outcome",
+          "anchor": "release-outcome"
+        }
+      ]
+    },
+    {
+      "path": "docs/verification/target-requirement-1.21.0.md",
+      "title": "Offered-release requirement check - v1.21.0 verification",
+      "lines": 169,
+      "headings": [
+        {
+          "level": 2,
+          "text": "Results",
+          "anchor": "results"
+        },
+        {
+          "level": 2,
+          "text": "Live production evidence (read-only)",
+          "anchor": "live-production-evidence-read-only"
+        },
+        {
+          "level": 2,
+          "text": "The fetch, checked against the live production updates",
+          "anchor": "the-fetch-checked-against-the-live-production-updates"
+        },
+        {
+          "level": 2,
+          "text": "Offline card rendering",
+          "anchor": "offline-card-rendering"
+        },
+        {
+          "level": 3,
+          "text": "Compatibility verdicts - desktop",
+          "anchor": "compatibility-verdicts---desktop"
+        },
+        {
+          "level": 3,
+          "text": "Compatibility verdicts - phone",
+          "anchor": "compatibility-verdicts---phone"
+        },
+        {
+          "level": 2,
+          "text": "Behaviour covered by the Python suite",
+          "anchor": "behaviour-covered-by-the-python-suite"
+        },
+        {
+          "level": 2,
+          "text": "Remaining checks and limits",
+          "anchor": "remaining-checks-and-limits"
+        }
+      ]
+    },
+    {
       "path": "docs/verification/themes-templates-1.17.4.md",
       "title": "Themes and templates — v1.17.4 verification",
       "lines": 9,
@@ -971,10 +1129,22 @@
             "signature": "REASON_HA_UNREADABLE = \"ha_unreadable\""
           },
           {
+            "kind": "const",
+            "name": "REASON_TARGET_UNREADABLE",
+            "parent": "",
+            "signature": "REASON_TARGET_UNREADABLE = \"target_unreadable\""
+          },
+          {
             "kind": "function",
             "name": "declared_min_ha_version",
             "parent": "",
             "signature": "declared_min_ha_version(repository_manifest: Any) -> str | None"
+          },
+          {
+            "kind": "function",
+            "name": "target_unreadable_requirement",
+            "parent": "",
+            "signature": "target_unreadable_requirement(installed_ha_version: str | None) -> dict[str, Any]"
           },
           {
             "kind": "function",
@@ -987,6 +1157,12 @@
             "name": "strictest",
             "parent": "",
             "signature": "strictest(requirements: Any) -> dict[str, Any] | None"
+          },
+          {
+            "kind": "function",
+            "name": "requirement_counts",
+            "parent": "",
+            "signature": "requirement_counts(requirements: Any) -> dict[str, int]"
           },
           {
             "kind": "function",
@@ -1198,6 +1374,30 @@
           },
           {
             "kind": "const",
+            "name": "ATTR_DATA_STALE",
+            "parent": "",
+            "signature": "ATTR_DATA_STALE = \"data_stale\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_LAST_SUCCESSFUL_SCAN",
+            "parent": "",
+            "signature": "ATTR_LAST_SUCCESSFUL_SCAN = \"last_successful_scan\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_SCAN_ERROR",
+            "parent": "",
+            "signature": "ATTR_SCAN_ERROR = \"scan_error\""
+          },
+          {
+            "kind": "const",
+            "name": "ATTR_STORE_STATUS",
+            "parent": "",
+            "signature": "ATTR_STORE_STATUS = \"store_status\""
+          },
+          {
+            "kind": "const",
             "name": "CONF_EXCLUDE",
             "parent": "",
             "signature": "CONF_EXCLUDE = \"exclude\"  # user-maintained list of components to treat as used (#70)"
@@ -1315,6 +1515,54 @@
             "name": "DEFAULT_SCAN_INTERVAL",
             "parent": "",
             "signature": "DEFAULT_SCAN_INTERVAL = 3600  # 1 hour"
+          },
+          {
+            "kind": "const",
+            "name": "SCAN_RETRY_INTERVAL",
+            "parent": "",
+            "signature": "SCAN_RETRY_INTERVAL = 30"
+          },
+          {
+            "kind": "const",
+            "name": "SCAN_RETRY_MAX_INTERVAL",
+            "parent": "",
+            "signature": "SCAN_RETRY_MAX_INTERVAL = DEFAULT_SCAN_INTERVAL"
+          },
+          {
+            "kind": "const",
+            "name": "SCAN_STALE_GRACE",
+            "parent": "",
+            "signature": "SCAN_STALE_GRACE = 86400  # 24 hours"
+          },
+          {
+            "kind": "const",
+            "name": "TARGET_MANIFEST_URL",
+            "parent": "",
+            "signature": "TARGET_MANIFEST_URL = \"https://raw.githubusercontent.com/{full_name}/{ref}/hacs.json\""
+          },
+          {
+            "kind": "const",
+            "name": "TARGET_MANIFEST_TIMEOUT",
+            "parent": "",
+            "signature": "TARGET_MANIFEST_TIMEOUT = 10"
+          },
+          {
+            "kind": "const",
+            "name": "TARGET_MANIFEST_BUDGET",
+            "parent": "",
+            "signature": "TARGET_MANIFEST_BUDGET = 25"
+          },
+          {
+            "kind": "const",
+            "name": "TARGET_MANIFEST_CONCURRENCY",
+            "parent": "",
+            "signature": "TARGET_MANIFEST_CONCURRENCY = 4"
+          },
+          {
+            "kind": "const",
+            "name": "TARGET_MANIFEST_MAX_BYTES",
+            "parent": "",
+            "signature": "TARGET_MANIFEST_MAX_BYTES = 262_144"
           },
           {
             "kind": "const",
@@ -1961,6 +2209,12 @@
           },
           {
             "kind": "function",
+            "name": "async_verify_update_requirements",
+            "parent": "ComponentScanner",
+            "signature": "async_verify_update_requirements(self, updates: dict[str, Any]) -> None"
+          },
+          {
+            "kind": "function",
             "name": "card_category_override",
             "parent": "",
             "signature": "card_category_override(kind: Any, category: str) -> str"
@@ -2092,6 +2346,24 @@
           },
           {
             "kind": "function",
+            "name": "label",
+            "parent": "Provider",
+            "signature": "label(self) -> str"
+          },
+          {
+            "kind": "function",
+            "name": "starting",
+            "parent": "Provider",
+            "signature": "starting(self) -> bool"
+          },
+          {
+            "kind": "function",
+            "name": "require_readable",
+            "parent": "Provider",
+            "signature": "require_readable(self) -> None"
+          },
+          {
+            "kind": "function",
             "name": "require_ready",
             "parent": "Provider",
             "signature": "require_ready(self) -> None"
@@ -2113,6 +2385,12 @@
             "name": "read",
             "parent": "",
             "signature": "read() -> dict[str, Any]"
+          },
+          {
+            "kind": "function",
+            "name": "store_status",
+            "parent": "",
+            "signature": "store_status(hass: HomeAssistant) -> dict[str, Any]"
           }
         ]
       },
@@ -2159,6 +2437,24 @@
             "name": "_ccm_escapeHtml",
             "parent": "",
             "signature": "function _ccm_escapeHtml(text)"
+          },
+          {
+            "kind": "function",
+            "name": "_ccm_staleAgo",
+            "parent": "",
+            "signature": "function _ccm_staleAgo(iso)"
+          },
+          {
+            "kind": "function",
+            "name": "_ccm_staleNoticeHtml",
+            "parent": "",
+            "signature": "function _ccm_staleNoticeHtml(attrs)"
+          },
+          {
+            "kind": "function",
+            "name": "_ccm_staleBadgeHtml",
+            "parent": "",
+            "signature": "function _ccm_staleBadgeHtml(attrs)"
           },
           {
             "kind": "class",
@@ -2212,6 +2508,18 @@
             "name": "hniFormatNumber",
             "parent": "",
             "signature": "function hniFormatNumber(n)"
+          },
+          {
+            "kind": "function",
+            "name": "hniStaleAgo",
+            "parent": "",
+            "signature": "function hniStaleAgo(iso)"
+          },
+          {
+            "kind": "function",
+            "name": "hniStaleNoticeHtml",
+            "parent": "",
+            "signature": "function hniStaleNoticeHtml(attrs)"
           },
           {
             "kind": "function",
@@ -2309,6 +2617,24 @@
             "signature": "function _riu_escapeHtml(text)"
           },
           {
+            "kind": "function",
+            "name": "_riu_staleAgo",
+            "parent": "",
+            "signature": "function _riu_staleAgo(iso)"
+          },
+          {
+            "kind": "function",
+            "name": "_riu_staleNoticeHtml",
+            "parent": "",
+            "signature": "function _riu_staleNoticeHtml(attrs)"
+          },
+          {
+            "kind": "function",
+            "name": "_riu_staleBadgeHtml",
+            "parent": "",
+            "signature": "function _riu_staleBadgeHtml(attrs)"
+          },
+          {
             "kind": "class",
             "name": "RecentlyInstalledUnusedCard",
             "parent": "",
@@ -2354,6 +2680,24 @@
             "name": "uatAttr",
             "parent": "",
             "signature": "function uatAttr(escapedText)"
+          },
+          {
+            "kind": "function",
+            "name": "uatStaleAgo",
+            "parent": "",
+            "signature": "function uatStaleAgo(iso)"
+          },
+          {
+            "kind": "function",
+            "name": "uatStaleNoticeHtml",
+            "parent": "",
+            "signature": "function uatStaleNoticeHtml(attrs)"
+          },
+          {
+            "kind": "function",
+            "name": "uatStaleBadgeHtml",
+            "parent": "",
+            "signature": "function uatStaleBadgeHtml(attrs)"
           },
           {
             "kind": "function",
@@ -2546,7 +2890,8 @@
     "tests/test_setup_and_service.py",
     "tests/test_store.py",
     "tests/test_tracker_card.cjs",
-    "tests/test_tracker_card_compat.cjs"
+    "tests/test_tracker_card_compat.cjs",
+    "tests/test_verify_update_requirements.py"
   ],
   "operations": [
     ".github/workflows/release.yaml",
@@ -2560,8 +2905,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "aeb980c05b62819b9e202c55f5371347f3c1b601",
-    "content_hash": "d962ffe7d9576b8e",
+    "source_commit": "8154925d1b8b8c772ec6390a3c7bc5182f085e2b",
+    "content_hash": "dd800179e084457c",
     "generator": "navgen"
   }
 }
