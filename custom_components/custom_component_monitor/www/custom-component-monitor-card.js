@@ -2,7 +2,7 @@
  * Custom Component Monitor Card
  * A Lovelace card that displays unused HACS components.
  */
-var CARD_VERSION = "1.19.0";
+var CARD_VERSION = "1.20.0";
 
 var ALL_SECTIONS = ["integrations", "themes", "frontend"];
 
@@ -20,6 +20,47 @@ function _ccm_escapeHtml(text) {
   var el = document.createElement("span");
   el.textContent = String(text);
   return el.innerHTML;
+}
+
+/**
+ * How long ago the last good scan was, in words.
+ *
+ * The integration stops serving stale counts after 24 hours (SCAN_STALE_GRACE),
+ * so minutes and hours cover every age this can be asked about.
+ */
+function _ccm_staleAgo(iso) {
+  var then = Date.parse(iso);
+  if (!iso || isNaN(then)) { return ""; }
+  var mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) { return "a moment ago"; }
+  if (mins < 60) { return mins + " minute" + (mins === 1 ? "" : "s") + " ago"; }
+  var hours = Math.round(mins / 60);
+  return hours + " hour" + (hours === 1 ? "" : "s") + " ago";
+}
+
+/**
+ * The "these are the last good counts" notice (#114).
+ *
+ * The sensors stay available and keep serving the last successful scan when a
+ * scan fails, instead of every card going blank - which is what 1.19.0 did.
+ * The trade is that the numbers on screen can be old, so they have to say so:
+ * a drawn half-filled mark plus the word "Stale", never colour alone.
+ */
+function _ccm_staleNoticeHtml(attrs) {
+  if (!attrs || !attrs.data_stale) { return ""; }
+  var ago = _ccm_staleAgo(attrs.last_successful_scan);
+  var err = attrs.scan_error ? String(attrs.scan_error) : "";
+  return '<div class="stale-note" role="status">' +
+    '<span class="glyph stale"></span>' +
+    "<span><strong>Stale</strong> &mdash; showing the last good scan" +
+    (ago ? " from " + ago : "") + ". The newest scan failed" +
+    (err ? ": " + _ccm_escapeHtml(err) : ".") +
+    "</span></div>";
+}
+
+function _ccm_staleBadgeHtml(attrs) {
+  if (!attrs || !attrs.data_stale) { return ""; }
+  return '<span class="badge stale"><span class="glyph stale"></span> Stale</span>';
 }
 
 class CustomComponentMonitorCard extends HTMLElement {
@@ -163,6 +204,14 @@ class CustomComponentMonitorCard extends HTMLElement {
       sectionsHtml = '<div class="empty-msg" role="status">Component data unavailable. HACS or Marketplace may still be starting. Check its integration, then run Scan now. This card will retry automatically.</div>';
     }
 
+    // #114: available, but the newest scan failed - the counts above are the
+    // last good ones. Read from the all-components sensor, which every count on
+    // this card is derived from. Never shown alongside "Unavailable": there is
+    // no last good scan to be stale in that case.
+    var healthAttrs = (!unavailable && allComponents) ? allComponents.attributes : null;
+    var staleNoticeHtml = _ccm_staleNoticeHtml(healthAttrs);
+    badgeHtml = badgeHtml + _ccm_staleBadgeHtml(healthAttrs);
+
     var unusedColor = totalUnused > 0 ? "var(--red)" : "var(--green)";
     var footerHtml = lastScan ? "Last scan: " + this._formatTime(lastScan) : "";
     var sortIcon = this._sortMode === "days" ? "mdi:sort-calendar-descending" : "mdi:sort-alphabetical-ascending";
@@ -194,6 +243,17 @@ class CustomComponentMonitorCard extends HTMLElement {
       ".badge.clean { background:var(--green); }",
       ".badge.warn { background:var(--orange); }",
       ".badge.alert { background:var(--red); }",
+      /* #114: outlined, so it never reads as a second count pill beside the
+         "N Unused" one it sits next to. */
+      ".badge.stale { background:transparent; color:var(--orange); border:1px solid var(--orange); display:inline-flex; align-items:center; gap:4px; }",
+      /* The state marks are DRAWN, not typed, matching the compatibility glyphs
+         in update-action-tracker-card.js: U+25D0 as a text character renders at
+         about a third the size of its siblings on some platforms, which breaks
+         the one distinction a colour-blind reader relies on. */
+      ".glyph { display:inline-block; width:0.72em; height:0.72em; box-sizing:border-box; border:1.5px solid currentColor; border-radius:50%; flex-shrink:0; position:relative; top:0.1em; }",
+      ".glyph.stale { background:linear-gradient(to right, currentColor 50%, transparent 50%); }",
+      ".stale-note { display:flex; align-items:flex-start; gap:6px; margin:0 0 12px; padding:8px 10px; border-radius:8px; font-size:0.8em; line-height:1.4; color:var(--primary); background:rgba(255,152,0,0.14); border-left:3px solid var(--orange); }",
+      ".stale-note strong { font-weight:600; }",
       ".toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }",
       ".summary { display:flex; gap:12px; flex-wrap:wrap; flex:1; }",
       ".stat { flex:1; min-width:70px; text-align:center; padding:8px 4px; border-radius:8px; background:var(--divider); }",
@@ -238,6 +298,7 @@ class CustomComponentMonitorCard extends HTMLElement {
       "      " + badgeHtml,
       "    </div>",
       "  </div>",
+      staleNoticeHtml,
       '  <div class="toolbar"' + (unavailable ? ' hidden style="display:none"' : '') + '>',
       '    <div class="summary">',
       '      <div class="stat"><div class="num">' + totalInstalled + '</div><div class="label">Installed</div></div>',

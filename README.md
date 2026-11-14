@@ -47,14 +47,50 @@ core or unrelated integrations. Dismiss, automatic country hides and Restore wri
 the selected repositories through the active store's own persistence handler. Install
 links open the active store's repository screen; they do not download anything directly.
 
-If the selected store is unreadable, starting, disabled or incompatible, the sensors and
-cards show **Unavailable**, not zero or "up to date". Failed scans retry every 30 seconds;
-successful scans return to the normal hourly interval. Check the store integration, then
-use **Scan now** to request a scan. Store unavailability does not reset saved local history.
+If the selected store is unreadable, disabled or incompatible and there is no earlier scan
+to fall back on, the sensors and cards show **Unavailable**, not zero or "up to date".
+From v1.20.0, when there *is* an earlier scan the cards keep showing it and mark it
+**Stale** instead — see [When a scan fails](#when-a-scan-fails-v1200). Check the store
+integration, then use **Scan now** to request a scan. A failed scan never resets saved
+local history.
 
 Marketplace runtime and review-writing interfaces are private and guarded, checked
 against HA 2026.11.0. Future contract changes need compatibility verification rather than
 silently accepting an empty snapshot. New-item review can still be disabled in the options.
+
+## When a scan fails (v1.20.0)
+
+A failed scan no longer blanks your cards. Up to v1.19.0 any scan error took all six
+sensors unavailable, so every card switched to its "no data" branch and the counts you
+already had disappeared. From v1.20.0 the last good scan stays on screen, marked:
+
+> ◐ **Stale** — showing the last good scan from 2 hours ago. The newest scan failed: HACS is starting; component data will retry automatically.
+
+The three cards with a header badge row also show a small **Stale** badge beside the
+count. The mark is a drawn half-filled shape paired with the word, so nothing depends on
+telling colours apart.
+
+Three rules bound it:
+
+- **A cold start still shows Unavailable.** If the first scan after a restart fails there
+  is no earlier data to be stale about. The two states are never shown together.
+- **Stale data expires after 24 hours.** Past that the sensors go unavailable and the
+  cards show **Unavailable**, because "these numbers are from last week" is worse than an
+  honest blank.
+- **The retry backs off** — 30 seconds, 1 minute, 2 minutes, doubling up to the ordinary
+  hourly scan — and resets to normal the moment a scan succeeds. The error is logged once
+  per distinct message rather than on every retry.
+
+Every sensor carries the detail, so an automation can notify you (see
+[Sensor Attributes](#sensor-attributes)). `store_status` is the quickest way to tell whose
+fault it is: a `stage` of `startup` with `starting: true` long after Home Assistant came
+up is your store integration failing to finish its own startup, not the monitor. That is
+what [#114](https://github.com/loryanstrant/HA-CustomComponentMonitor/issues/114) was —
+HACS 2.0.5 can get stuck reporting itself as starting for the whole time Home Assistant is
+up, while its repository file on disk is complete and correct. v1.20.0 reads that file and
+judges the data rather than the status flag, so the monitor keeps working through it; a
+Home Assistant restart clears the HACS side, and Home Assistant 2026.11's built-in
+Marketplace replaces the version this happens on.
 
 ## Screenshots
 
@@ -124,6 +160,7 @@ When you filter the list (by component type or AI category), the bulk button bec
 - 🏷️ **Repository Links**: Direct links to each component's repository
 - 📅 **Installation Tracking**: Shows how long each component has been installed
 - ⚡ **Real-time Updates**: Hourly scans to reflect configuration changes
+- ◐ **Honest when a scan fails**: all four cards keep the last good counts and mark them **Stale**, with when they were collected and why the newest scan failed, instead of going blank — see [When a scan fails](#when-a-scan-fails-v1200)
 
 ### HACS Update Action Tracker
 
@@ -186,7 +223,16 @@ The integration creates six sensors and one to-do entity:
 
 ### Sensor Attributes
 
-Each unused sensor provides:
+Every sensor provides (v1.20.0 — see [When a scan fails](#when-a-scan-fails-v1200)):
+
+- `component_provider` — which store is being read, `hacs` or `marketplace`
+- `data_stale` — `true` while the newest scan failed and the values shown are from an earlier one
+- `last_successful_scan` — when the data currently shown was actually collected
+- `scan_error` — why the newest scan failed, or `null` when it didn't
+- `store_status` — the store's own view of itself: `provider`, `loaded`, `disabled`, `stage`, `starting`
+- `last_scan` — when the data shown was collected; a failed scan leaves it where it was, so it matches `last_successful_scan`
+
+Each unused sensor also provides:
 
 - `total_components` — total installed in that category
 - `used_components` — count of components in active use
@@ -359,6 +405,7 @@ Every option below is available in the visual editor — no YAML required.
 - Provides **Skip**, **Update**, and **Update & Action** buttons
 - Offers a context-aware bulk button (with a confirmation): **Update all (N)** normally, **Update selected (N)** when the list is filtered, or **Update N of M** when some listed updates are out of scope — installing only the visible, installable updates, so you can update no-restart items (Cards/Themes) without touching integrations
 - Displays a pending count badge, **None installable** when every pending update needs a newer Home Assistant, or **Up to date** when clear
+- Shows a **Stale** badge and notice when the newest scan failed, rather than dropping the list it already had (v1.20.0)
 - Holds back updates that need a newer Home Assistant, and states every listed update's requirement — see [Home Assistant compatibility](#home-assistant-compatibility-v1190)
 - Fetches and renders release notes with basic Markdown support
 - Shows progress while updates are installing

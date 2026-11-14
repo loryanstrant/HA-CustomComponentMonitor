@@ -4,7 +4,7 @@
  * Skip, Update, and Update & Action buttons.
  */
 
-const CARD_VERSION = "1.19.0";
+const CARD_VERSION = "1.20.0";
 const UAT_DOMAIN = "custom_component_monitor";
 // #91: AI summaries and the ai_enabled flag live here, not on the update.*
 // entities. Both the card and its editor read it.
@@ -22,6 +22,48 @@ function uatEscapeHtml(text) {
 // already-escaped string still needs this before it goes in an attribute.
 function uatAttr(escapedText) {
   return String(escapedText).replace(/"/g, "&quot;");
+}
+
+/**
+ * How long ago the last good scan was, in words. The integration stops serving
+ * stale data after 24 hours (SCAN_STALE_GRACE), so minutes and hours cover
+ * every age this can be asked about.
+ */
+function uatStaleAgo(iso) {
+  const then = Date.parse(iso);
+  if (!iso || Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "a moment ago";
+  if (mins < 60) return mins + " minute" + (mins === 1 ? "" : "s") + " ago";
+  const hours = Math.round(mins / 60);
+  return hours + " hour" + (hours === 1 ? "" : "s") + " ago";
+}
+
+/**
+ * The "this is the last good scan" notice (#114).
+ *
+ * The sensor stays available and keeps serving the last successful scan when a
+ * scan fails, instead of the card going blank - which is what 1.19.0 did. The
+ * trade is that the rows on screen can be old, so they have to say so, with
+ * the same drawn half-filled mark the compatibility lines use.
+ */
+function uatStaleNoticeHtml(attrs) {
+  if (!attrs || !attrs.data_stale) return "";
+  const ago = uatStaleAgo(attrs.last_successful_scan);
+  const err = attrs.scan_error ? String(attrs.scan_error) : "";
+  return (
+    '<div class="stale-note" role="status">' +
+    '<span class="glyph stale"></span>' +
+    "<span><strong>Stale</strong> &mdash; showing the last good scan" +
+    (ago ? " from " + ago : "") + ". The newest scan failed" +
+    (err ? ": " + uatEscapeHtml(err) : ".") +
+    "</span></div>"
+  );
+}
+
+function uatStaleBadgeHtml(attrs) {
+  if (!attrs || !attrs.data_stale) return "";
+  return '<span class="badge stale"><span class="glyph stale"></span> Stale</span>';
 }
 
 /* -- Editor Element -------------------------------------------
@@ -290,6 +332,10 @@ class UpdateActionTrackerCard extends HTMLElement {
     if (sensor) {
       const a = sensor.attributes || {};
       parts.push("source=" + sensor.state + "|" + a.component_provider);
+      // #114: whether these rows are the last good scan, and why. Without this
+      // the notice would not appear until some other attribute happened to
+      // change, and would not clear when the next scan succeeded.
+      parts.push("stale=" + String(a.data_stale) + "|" + String(a.last_successful_scan) + "|" + String(a.scan_error));
       parts.push("ai=" + String(a.ai_enabled) + "|" + String(a.ai_pending) + "|" + String(a.ai_in_progress));
       for (const u of a.updates || []) {
         // #111: the Home Assistant requirement is part of what a row shows, so
@@ -885,13 +931,21 @@ class UpdateActionTrackerCard extends HTMLElement {
 
     /* #111: the header says how many are being held back, so the count in the
        pending badge is never quietly short of the real number of updates. */
-    let badgesHtml = '<span class="badge ' + badgeClass + '">' + badgeText + '</span>';
+    const badgeParts = ['<span class="badge ' + badgeClass + '">' + badgeText + '</span>'];
     if (blockedAll.length > 0) {
-      badgesHtml =
-        '<span class="header-badges">' + badgesHtml +
+      badgeParts.push(
         '<span class="badge blocked"><span class="glyph blocked"></span> ' +
-        blockedAll.length + ' incompatible</span></span>';
+        blockedAll.length + ' incompatible</span>'
+      );
     }
+    /* #114: the newest scan failed, so these rows are the last good set. The
+       badge marks it in the header; the notice below says from when and why. */
+    const staleNoticeHtml = uatStaleNoticeHtml(sensorAttrs);
+    const staleBadgeHtml = uatStaleBadgeHtml(sensorAttrs);
+    if (staleBadgeHtml) badgeParts.push(staleBadgeHtml);
+    let badgesHtml = badgeParts.length > 1
+      ? '<span class="header-badges">' + badgeParts.join("") + "</span>"
+      : badgeParts[0];
 
     /* #111: the reveal switch and, beside it, why those rows are not listed. */
     let compatBarHtml = "";
@@ -939,6 +993,7 @@ class UpdateActionTrackerCard extends HTMLElement {
       '<span class="title">' + title + '</span>' +
       badgesHtml +
       '</div>' +
+      staleNoticeHtml +
       filtersHtml +
       catFiltersHtml +
       compatBarHtml +
@@ -1386,6 +1441,14 @@ class UpdateActionTrackerCard extends HTMLElement {
          a second "N updates" pill. */
       ".badge.blocked { background:transparent; color:var(--uat-orange); border:1px solid var(--uat-orange); }",
       ".header-badges { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }",
+
+      /* #114: these rows are the last good scan. Outlined like the blocked
+         badge, so it never reads as a second "N updates" count, and marked
+         with the same drawn half-filled glyph. */
+      ".badge.stale { background:transparent; color:var(--uat-orange); border:1px solid var(--uat-orange); display:inline-flex; align-items:center; gap:4px; }",
+      ".glyph.stale { background:linear-gradient(to right, currentColor 50%, transparent 50%); }",
+      ".stale-note { display:flex; align-items:flex-start; gap:6px; margin:-4px 0 12px; padding:8px 10px; border-radius:8px; font-size:0.8em; line-height:1.4; color:var(--uat-primary); background:rgba(255,152,0,0.14); border-left:3px solid var(--uat-orange); }",
+      ".stale-note strong { font-weight:600; }",
 
       /* The per-row requirement line, directly under the version line.
        *

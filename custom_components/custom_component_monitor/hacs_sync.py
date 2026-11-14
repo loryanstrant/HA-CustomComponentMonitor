@@ -45,7 +45,7 @@ async def async_sync_hacs_new(
         result.error = str(err)
         return result
     hacs = provider.manager
-    label = provider.domain.title()
+    label = provider.label
     repositories = getattr(hacs, "repositories", None)
     lookup = getattr(repositories, "get_by_full_name", None)
     writer = getattr(getattr(hacs, "data", None), "async_write", None)
@@ -55,7 +55,7 @@ async def async_sync_hacs_new(
     if getattr(getattr(hacs, "system", None), "disabled", False) or getattr(
         getattr(hacs, "status", None), "startup", False
     ):
-        result.error = "HACS is starting or disabled; review syncing will retry on the next scan."
+        result.error = f"{label} is starting or disabled; review syncing will retry on the next scan."
         return result
 
     changes: list[tuple[object, bool]] = []

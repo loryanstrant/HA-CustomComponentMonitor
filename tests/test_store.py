@@ -12,7 +12,18 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.custom_component_monitor.const import DOMAIN
+from homeassistant.util import dt as dt_util
+
+from custom_components.custom_component_monitor.const import (
+    ATTR_DATA_STALE,
+    ATTR_LAST_SUCCESSFUL_SCAN,
+    ATTR_SCAN_ERROR,
+    ATTR_STORE_STATUS,
+    DOMAIN,
+    SCAN_RETRY_INTERVAL,
+    SCAN_RETRY_MAX_INTERVAL,
+    SCAN_STALE_GRACE,
+)
 from custom_components.custom_component_monitor.hacs_sync import async_sync_hacs_new
 from custom_components.custom_component_monitor.sensor import (
     SCAN_INTERVAL,
@@ -22,7 +33,19 @@ from custom_components.custom_component_monitor.store import (
     StoreUnavailable,
     async_repository_snapshot,
     resolve_provider,
+    store_status,
 )
+
+SNAPSHOT = 'custom_components.custom_component_monitor.sensor.async_repository_snapshot'
+LEGACY_ROW = {'1': {'full_name': 'owner/legacy', 'category': 'integration', 'installed': True}}
+
+
+async def write_hacs_file(hass, raw):
+    path = Path(hass.config.path('.storage/hacs.repositories'))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await hass.async_add_executor_job(
+        path.write_text, json.dumps({'version': '6', 'data': raw}))
+    return raw
 
 
 def repository(**overrides):
@@ -72,7 +95,7 @@ async def test_unloaded_marketplace_never_falls_back_to_hacs(hass, state):
     hass.data['hacs'] = manager(repository())
     with entries(hass, NS(state=state, runtime_data=manager(repository()))):
         assert resolve_provider(hass).manager is None
-        with pytest.raises(StoreUnavailable, match='not loaded'):
+        with pytest.raises(StoreUnavailable, match='Marketplace is not loaded'):
             await async_repository_snapshot(hass)
         result = await async_sync_hacs_new(hass, {'owner/component': False})
     assert result.error and not result.completed
@@ -152,8 +175,78 @@ async def test_missing_corrupt_or_incompatible_hacs_is_not_empty(hass, content):
 
 async def test_configured_unloaded_hacs_never_reads_stale_file(hass):
     with (entries(hass, hacs=NS(state=ConfigEntryState.NOT_LOADED)),
-          pytest.raises(StoreUnavailable, match='not loaded')):
+          pytest.raises(StoreUnavailable, match='HACS is not loaded')):
         await async_repository_snapshot(hass)
+
+
+@pytest.mark.parametrize('stage', ['startup', 'setup'])
+async def test_hacs_stuck_on_a_starting_stage_still_scans_its_file(hass, stage):
+    """The 1.19.0 fault (#114).
+
+    HACS 2.0.5 can stay on a starting stage for the whole uptime of Home
+    Assistant — a duplicate repository row raises out of its startup tasks
+    after ``status.startup`` is already cleared, so the stage never advances
+    to running. Its storage file is complete and correct throughout, and
+    refusing to read it blanked all six sensors and every card, permanently.
+    """
+    raw = await write_hacs_file(hass, deepcopy(LEGACY_ROW))
+    stuck = manager()
+    stuck.stage = stage
+    hass.data['hacs'] = stuck
+    with entries(hass, hacs=NS(state=ConfigEntryState.LOADED)):
+        assert await async_repository_snapshot(hass) == ('hacs', raw)
+        assert store_status(hass) == {'provider': 'hacs', 'loaded': True,
+                                      'disabled': False, 'stage': stage, 'starting': True}
+
+
+async def test_starting_hacs_with_an_empty_store_is_not_empty(hass):
+    """An empty file mid-startup is a file HACS has not finished writing.
+
+    The message is quoted on the cards from 1.20.0, so the brand's own
+    spelling is asserted here rather than ``domain.title()``'s "Hacs".
+    """
+    await write_hacs_file(hass, {})
+    stuck = manager()
+    stuck.stage = 'startup'
+    hass.data['hacs'] = stuck
+    with (entries(hass, hacs=NS(state=ConfigEntryState.LOADED)),
+          pytest.raises(StoreUnavailable, match='HACS is starting')):
+        await async_repository_snapshot(hass)
+
+
+@pytest.mark.parametrize('condition', ['disabled', 'unloaded'])
+async def test_a_readable_file_does_not_excuse_an_absent_hacs(hass, condition):
+    await write_hacs_file(hass, deepcopy(LEGACY_ROW))
+    if condition == 'disabled':
+        off = manager()
+        off.system.disabled = True
+        hass.data['hacs'] = off
+        state, expected = ConfigEntryState.LOADED, 'HACS is disabled'
+    else:
+        state, expected = ConfigEntryState.NOT_LOADED, 'HACS is not loaded'
+    with (entries(hass, hacs=NS(state=state)),
+          pytest.raises(StoreUnavailable, match=expected)):
+        await async_repository_snapshot(hass)
+
+
+async def test_starting_marketplace_never_leaks_the_hacs_file(hass):
+    """Marketplace owns the store once it exists — starting or not."""
+    await write_hacs_file(hass, deepcopy(LEGACY_ROW))
+    starting = manager(repository())
+    starting.stage = 'startup'
+    with (entries(hass, NS(state=ConfigEntryState.LOADED, runtime_data=starting)),
+          pytest.raises(StoreUnavailable, match='Marketplace is starting')):
+        await async_repository_snapshot(hass)
+
+
+async def test_review_sync_still_refuses_a_starting_provider(hass):
+    """Reading a file is relaxed (#114); writing to live objects is not."""
+    starting = manager(repository(installed=False, new=True))
+    starting.stage = 'startup'
+    with entries(hass, NS(state=ConfigEntryState.LOADED, runtime_data=starting)):
+        result = await async_sync_hacs_new(hass, {'owner/component': False})
+    assert result.error and not result.completed
+    starting.data.async_write.assert_not_awaited()
 
 
 async def test_marketplace_review_targets_one_repo_and_rolls_back_failed_save(hass):
@@ -172,6 +265,13 @@ async def test_marketplace_review_targets_one_repo_and_rolls_back_failed_save(ha
 
 
 async def test_unavailable_scan_retains_dates_reviews_and_last_good_data(coordinator):
+    """Data with no ``last_successful_scan`` marker fails honestly (#114).
+
+    Either a cold start or an upgrade from a version that never wrote the
+    marker: there is nothing datable to be stale *about*, so unavailable is
+    the truthful answer. The registries are untouched either way — a failed
+    scan is not evidence that anything was uninstalled.
+    """
     coord = coordinator
     coord.install_dates._loaded = True
     coord.install_dates._store = None
@@ -189,7 +289,94 @@ async def test_unavailable_scan_retains_dates_reviews_and_last_good_data(coordin
     assert coord.data is old
     assert coord.install_dates._components == dates
     assert coord.new_items_registry.is_dismissed('owner/reviewed')
-    assert coord.update_interval == timedelta(seconds=30)
+    assert coord.update_interval == timedelta(seconds=SCAN_RETRY_INTERVAL)
+
+
+async def test_failed_scan_serves_the_last_good_counts_and_marks_them_stale(coordinator):
+    """The cards keep their numbers and are told the numbers are old (#114)."""
+    coord = coordinator
+    coord.install_dates._loaded = True
+    coord.install_dates._store = None
+    coord.new_items_registry._loaded = True
+    coord.new_items_registry._store = None
+    with patch(SNAPSHOT, return_value=('hacs', deepcopy(LEGACY_ROW))) as snapshot:
+        await coord.async_refresh()
+        good = coord.data
+        assert coord.last_update_success
+        assert good[ATTR_DATA_STALE] is False and good[ATTR_SCAN_ERROR] is None
+        assert good[ATTR_LAST_SUCCESSFUL_SCAN] == good['last_scan']
+        assert coord.update_interval == SCAN_INTERVAL
+
+        snapshot.side_effect = StoreUnavailable('Hacs is starting; it will retry.')
+        await coord.async_refresh()
+        # The whole point: the entities stay available, so the cards render.
+        assert coord.last_update_success
+        assert coord.data[ATTR_DATA_STALE] is True
+        assert 'starting' in coord.data[ATTR_SCAN_ERROR]
+        assert coord.data['all_components'] == good['all_components']
+        assert coord.data[ATTR_LAST_SUCCESSFUL_SCAN] == good[ATTR_LAST_SUCCESSFUL_SCAN]
+        # Same sub-objects, not copies: the AI workers hold references to
+        # these and test identity to spot a newer scan.
+        assert coord.data['updates'] is good['updates']
+        assert coord.data[ATTR_STORE_STATUS]['provider'] == 'hacs'
+        # Backoff, not 30 seconds forever — and a recovery clears everything.
+        assert coord.update_interval == timedelta(seconds=SCAN_RETRY_INTERVAL)
+        await coord.async_refresh()
+        assert coord.update_interval == timedelta(seconds=SCAN_RETRY_INTERVAL * 2)
+        coord._scan_failures = 99
+        await coord.async_refresh()
+        assert coord.update_interval == timedelta(seconds=SCAN_RETRY_MAX_INTERVAL)
+
+        snapshot.side_effect = None
+        await coord.async_refresh()
+        assert coord.data[ATTR_DATA_STALE] is False
+        assert coord.data[ATTR_SCAN_ERROR] is None
+        assert coord.update_interval == SCAN_INTERVAL
+
+
+async def test_an_unexpected_failure_is_not_quoted_on_the_dashboard(coordinator):
+    """Only the store's own curated messages reach the cards (#114).
+
+    The card prints ``scan_error`` verbatim. A ``StoreUnavailable`` is written
+    for a person; anything else is a bug in this component, and its exception
+    text belongs in the log rather than on someone's dashboard.
+    """
+    coord = coordinator
+    coord.install_dates._loaded = True
+    coord.install_dates._store = None
+    coord.new_items_registry._loaded = True
+    coord.new_items_registry._store = None
+    with patch(SNAPSHOT, return_value=('hacs', deepcopy(LEGACY_ROW))) as snapshot:
+        await coord.async_refresh()
+        snapshot.side_effect = KeyError('some_internal_key')
+        await coord.async_refresh()
+    assert coord.last_update_success
+    assert coord.data[ATTR_DATA_STALE] is True
+    assert 'some_internal_key' not in coord.data[ATTR_SCAN_ERROR]
+    assert 'Home Assistant log' in coord.data[ATTR_SCAN_ERROR]
+
+
+async def test_stale_data_expires_rather_than_being_served_forever(coordinator):
+    """A day of "from earlier" is useful; a week of it is misinformation."""
+    coord = coordinator
+    expired = (dt_util.now() - timedelta(seconds=SCAN_STALE_GRACE + 60)).isoformat()
+    coord.data = {'provider': 'hacs', 'all_components': [{'name': 'Keep'}],
+                  ATTR_LAST_SUCCESSFUL_SCAN: expired}
+    with patch(SNAPSHOT, side_effect=StoreUnavailable('Starting')):
+        await coord.async_refresh()
+    assert not coord.last_update_success
+
+
+async def test_repeated_identical_scan_failures_are_logged_once(coordinator, caplog):
+    """The 1.19.0 fault logged the same line every 30 s for the whole uptime."""
+    coord = coordinator
+    with patch(SNAPSHOT, side_effect=StoreUnavailable('Hacs is starting; it will retry.')):
+        await coord.async_refresh()
+        caplog.clear()
+        await coord.async_refresh()
+        await coord.async_refresh()
+    assert not [r for r in caplog.records
+                if r.levelname == 'ERROR' and 'Error scanning' in r.message]
 
 
 async def test_initial_unavailable_setup_attaches_sensors_and_recovers_without_reload(hass):

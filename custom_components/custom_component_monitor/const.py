@@ -43,6 +43,19 @@ ATTR_AI_ETA_SECONDS = "ai_eta_seconds"
 # When exact install-date tracking began, surfaced on
 # sensor.hacs_installed_components so the card can explain its "~" marks (#93)
 ATTR_INSTALL_DATES_SINCE = "install_dates_since"
+# Scan health, on every sensor (#114). A failing scan used to make all six
+# sensors unavailable, which blanked every card and told the user nothing —
+# in 1.19.0 a HACS that never finished starting did exactly that, for good.
+# The last good counts are kept and marked instead:
+#   data_stale            True while the last scan failed but earlier data holds
+#   last_successful_scan  when the newest data actually came from
+#   scan_error            the failure in one sentence, for the card's notice
+#   store_status          the provider's own view of itself (store.store_status)
+# All four are small scalars, so they stay recorded.
+ATTR_DATA_STALE = "data_stale"
+ATTR_LAST_SUCCESSFUL_SCAN = "last_successful_scan"
+ATTR_SCAN_ERROR = "scan_error"
+ATTR_STORE_STATUS = "store_status"
 
 # Options
 CONF_EXCLUDE = "exclude"  # user-maintained list of components to treat as used (#70)
@@ -142,6 +155,21 @@ CATEGORY_MAP = {
 
 # Update interval (in seconds)
 DEFAULT_SCAN_INTERVAL = 3600  # 1 hour
+
+# --- Retry pacing after a failed scan (#114) -------------------------------
+# A failed scan used to pin the interval at 30 s and leave it there. When the
+# cause is permanent — a HACS stuck on "starting" for the whole uptime — that
+# is 120 pointless scans an hour, each logging an error. Back off instead:
+# 30 s, 60 s, 2 min … up to the ordinary hourly interval, so a transient
+# startup race still recovers in seconds while a permanent fault settles down
+# to the same cost as a normal scan. Reset to SCAN_INTERVAL on any success.
+SCAN_RETRY_INTERVAL = 30
+SCAN_RETRY_MAX_INTERVAL = DEFAULT_SCAN_INTERVAL
+# How long the last good data may be served as stale before the coordinator
+# gives up on it and goes properly unavailable. A day of "these counts are
+# from yesterday" is more useful than six blank cards; a week of it would be
+# misinformation.
+SCAN_STALE_GRACE = 86400  # 24 hours
 
 # --- Update Action Tracker (merged from HACS-Update-Action-Tracker) ---
 STORAGE_KEY = "custom_component_monitor.update_actions"

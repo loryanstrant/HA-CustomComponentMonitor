@@ -51,6 +51,7 @@ from .const import (
     ATTR_BY_CATEGORY,
     ATTR_CATEGORIES,
     ATTR_COMPONENTS,
+    ATTR_DATA_STALE,
     ATTR_DISMISSED_COUNT,
     ATTR_ENTITY_ID,
     ATTR_EXCLUDED_COMPONENTS,
@@ -62,6 +63,9 @@ from .const import (
     ATTR_INSTALL_DATES_SINCE,
     ATTR_ITEMS,
     ATTR_ITEMS_TRUNCATED,
+    ATTR_LAST_SUCCESSFUL_SCAN,
+    ATTR_SCAN_ERROR,
+    ATTR_STORE_STATUS,
     ATTR_SUMMARY,
     ATTR_TOTAL_COMPONENTS,
     ATTR_TOTAL_NEW,
@@ -100,6 +104,9 @@ from .const import (
     NEW_ITEMS_MAX_EXPOSED,
     NEW_ITEMS_MAX_EXPOSED_HIDDEN,
     NEW_ITEMS_WINDOW_DAYS,
+    SCAN_RETRY_INTERVAL,
+    SCAN_RETRY_MAX_INTERVAL,
+    SCAN_STALE_GRACE,
     SENSOR_ALL_COMPONENTS,
     SENSOR_HACS_UPDATES,
     SENSOR_NEW_ITEMS,
@@ -119,7 +126,12 @@ from .countries import CountryVerdict, classify, scope_is_foreign
 from .hacs_sync import async_sync_hacs_new
 from .install_dates import InstallDateRegistry
 from .new_items import NewItemRegistry, display_name_for
-from .store import UPDATE_PROVIDERS, async_repository_snapshot
+from .store import (
+    UPDATE_PROVIDERS,
+    StoreUnavailable,
+    async_repository_snapshot,
+    store_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1850,6 +1862,16 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Work-to-wall-clock ratio of the last completed pass, used for the
         # ETA. None until a pass has finished.
         self._new_items_ai_duty: float | None = None
+        # Scan health (#114). A failing scan keeps the last good data and says
+        # so, rather than taking all six sensors unavailable and blanking
+        # every card. ``_scan_failures`` drives the retry backoff;
+        # ``_scan_error_logged`` dedupes the log line the same way
+        # ``_note_ai_error`` does, because the 1.19.0 fault logged the same
+        # sentence every 30 seconds for as long as Home Assistant was up.
+        self._scan_failures = 0
+        self._scan_error: str | None = None
+        self._scan_error_logged: str | None = None
+        self._last_successful_scan: str | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -1996,6 +2018,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.new_items_registry.prune(new_items.pop("known_full_names", set()))
                     await self.async_sync_new_items_hacs(new_items)
 
+            scanned_at = dt_util.now().isoformat()
             data = {
                 "provider": self.scanner.provider,
                 "all_components": all_components,
@@ -2005,14 +2028,24 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "updates": updates,
                 "new_items": new_items,
                 "new_items_home_country": new_settings["home_country"],
-                "last_scan": dt_util.now().isoformat(),
+                "last_scan": scanned_at,
                 "install_dates_since": self.install_dates.seeded_at,
+                # Scan health (#114). A successful scan is the only thing that
+                # clears these, and ``last_successful_scan`` is what the stale
+                # path below stands on — so it is written here, with the data
+                # it describes, and never anywhere else.
+                ATTR_DATA_STALE: False,
+                ATTR_LAST_SUCCESSFUL_SCAN: scanned_at,
+                ATTR_SCAN_ERROR: None,
+                ATTR_STORE_STATUS: store_status(self.hass),
             }
         except Exception as exc:
-            self.update_interval = timedelta(seconds=30)
-            _LOGGER.error("Error scanning custom components: %s", exc)
-            raise UpdateFailed(exc) from exc
+            return self._handle_scan_failure(exc)
 
+        self._scan_failures = 0
+        self._scan_error = None
+        self._scan_error_logged = None
+        self._last_successful_scan = scanned_at
         self.update_interval = SCAN_INTERVAL
         # Only wake the worker for updates it would actually attempt. Counting
         # `ai_pending` here instead would re-spawn a no-op task every hour once
@@ -2022,6 +2055,83 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if new_items and any(item.get("ai_pending") for item in new_items.get("items", [])):
             self._schedule_new_items_ai_run()
         return data
+
+    def _handle_scan_failure(self, exc: Exception) -> dict[str, Any]:
+        """Serve the last good scan, marked stale, instead of going blank (#114).
+
+        1.19.0 raised ``UpdateFailed`` on every failure. That is correct for a
+        cold start and wrong for everything else: ``UpdateFailed`` makes all
+        six sensors unavailable, so every card loses the counts it already had
+        and shows its "no data" branch. A HACS that never finished starting
+        made that permanent — the on-disk component data was complete and
+        correct the whole time, and the user was looking at six blank cards.
+
+        So a failure with data behind it keeps that data, flags it
+        ``data_stale`` and publishes the reason, and the coordinator stays
+        successful so the entities stay alive. Three things still fail
+        honestly rather than lying:
+
+        * a cold start (nothing to be stale *about*);
+        * last-good data older than :data:`SCAN_STALE_GRACE`, where "from
+          yesterday" has become "from last week";
+        * an unparseable last-good timestamp, which is a store we no longer
+          understand.
+
+        The last good ``install_dates`` and ``new_items_registry`` are not
+        touched here at all — they are registries on disk, not scan output,
+        and a failed scan is not evidence that anything was uninstalled.
+        """
+        self._scan_failures += 1
+        message = str(exc) or exc.__class__.__name__
+        # What the cards quote. A StoreUnavailable message is written for a
+        # person to read and act on. Anything else reaching here is a bug in
+        # this component, and a raw Python exception string on someone's
+        # dashboard helps nobody — the log keeps the real text.
+        shown = message if isinstance(exc, StoreUnavailable) else (
+            "The component scan failed unexpectedly; check the Home Assistant log."
+        )
+        self._scan_error = shown
+        # 30 s, 60 s, 2 min … capped at the ordinary interval. A transient
+        # startup race recovers in seconds; a permanent fault stops costing a
+        # scan and an error line every 30 seconds for the rest of the uptime.
+        self.update_interval = timedelta(
+            seconds=min(
+                SCAN_RETRY_INTERVAL * 2 ** (self._scan_failures - 1),
+                SCAN_RETRY_MAX_INTERVAL,
+            )
+        )
+        if message != self._scan_error_logged:
+            self._scan_error_logged = message
+            _LOGGER.error("Error scanning custom components: %s", message)
+        else:
+            _LOGGER.debug("Error scanning custom components: %s", message)
+
+        last_good = self.data
+        last_success = (last_good or {}).get(ATTR_LAST_SUCCESSFUL_SCAN)
+        parsed = dt_util.parse_datetime(str(last_success)) if last_success else None
+        if parsed is None:
+            raise UpdateFailed(exc) from exc
+        if (dt_util.now() - parsed).total_seconds() > SCAN_STALE_GRACE:
+            raise UpdateFailed(exc) from exc
+
+        # Shallow on purpose: the sub-dicts (``updates``, ``new_items``, …)
+        # must stay the *same objects*, because the AI workers hold references
+        # to them and check identity to decide whether a newer scan has
+        # replaced the batch they were working on.
+        stale = dict(last_good)
+        stale[ATTR_DATA_STALE] = True
+        stale[ATTR_SCAN_ERROR] = shown
+        # Diagnostics must never escalate a handled failure into an unhandled
+        # one: this runs inside the ``except`` that already caught something,
+        # so a second raise here would leave the coordinator with neither
+        # stale data nor a clean UpdateFailed. Keep the last known status
+        # rather than inventing one.
+        try:
+            stale[ATTR_STORE_STATUS] = store_status(self.hass)
+        except Exception:  # noqa: BLE001 - diagnostics only
+            _LOGGER.debug("Could not read store status while handling a failed scan", exc_info=True)
+            stale[ATTR_STORE_STATUS] = last_good.get(ATTR_STORE_STATUS)
+        return stale
 
     async def async_sync_new_items_hacs(self, new_items: dict[str, Any]) -> None:
         """Reconcile the full rejected set, including pre-upgrade dismissals.
@@ -3622,22 +3732,25 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> int:
         """Return the sensor value (count)."""
         key = self.entity_description.key
+        # ``or {}`` throughout: a stale-data scan keeps these entities alive
+        # (#114), and an entity that is alive is asked for its state.
+        coord_data = self.coordinator.data or {}
 
         if key == SENSOR_ALL_COMPONENTS:
-            return len(self.coordinator.data.get("all_components", []))
+            return len(coord_data.get("all_components", []))
 
         # Phases 2-4 will populate these; for now return 0
         if key == SENSOR_UNUSED_INTEGRATIONS:
-            data = self.coordinator.data.get("integrations", {})
+            data = coord_data.get("integrations", {})
             return len(data.get("unused", []))
         if key == SENSOR_UNUSED_THEMES:
-            data = self.coordinator.data.get("themes", {})
+            data = coord_data.get("themes", {})
             return len(data.get("unused", []))
         if key == SENSOR_UNUSED_FRONTEND:
-            data = self.coordinator.data.get("frontend", {})
+            data = coord_data.get("frontend", {})
             return len(data.get("unused", []))
         if key == SENSOR_HACS_UPDATES:
-            data = self.coordinator.data.get("updates", {})
+            data = coord_data.get("updates", {})
             return data.get("count", 0)
 
         return 0
@@ -3646,17 +3759,25 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return state attributes."""
         key = self.entity_description.key
-        attrs: dict[str, Any] = {"component_provider": (self.coordinator.data or {}).get("provider")}
+        coord_data = self.coordinator.data or {}
+        attrs: dict[str, Any] = {
+            "component_provider": coord_data.get("provider"),
+            # Scan health on every sensor, so the cards can say "these counts
+            # are from earlier" instead of either hiding the staleness or
+            # showing nothing at all (#114).
+            ATTR_DATA_STALE: bool(coord_data.get(ATTR_DATA_STALE, False)),
+            ATTR_LAST_SUCCESSFUL_SCAN: coord_data.get(ATTR_LAST_SUCCESSFUL_SCAN),
+            ATTR_SCAN_ERROR: coord_data.get(ATTR_SCAN_ERROR),
+            ATTR_STORE_STATUS: coord_data.get(ATTR_STORE_STATUS),
+        }
 
         if key == SENSOR_ALL_COMPONENTS:
-            components = self.coordinator.data.get("all_components", [])
+            components = coord_data.get("all_components", [])
             attrs[ATTR_TOTAL_COMPONENTS] = len(components)
             attrs[ATTR_COMPONENTS] = components
             # When exact install-date tracking began; the cards use it to
             # explain why older components carry an estimated date (#93).
-            attrs[ATTR_INSTALL_DATES_SINCE] = self.coordinator.data.get(
-                "install_dates_since"
-            )
+            attrs[ATTR_INSTALL_DATES_SINCE] = coord_data.get("install_dates_since")
 
         elif key in (
             SENSOR_UNUSED_INTEGRATIONS,
@@ -3669,14 +3790,14 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
                 SENSOR_UNUSED_THEMES: "themes",
                 SENSOR_UNUSED_FRONTEND: "frontend",
             }[key]
-            data = self.coordinator.data.get(bucket, {})
+            data = coord_data.get(bucket, {})
             attrs[ATTR_TOTAL_COMPONENTS] = data.get("total", 0)
             attrs[ATTR_USED_COMPONENTS] = len(data.get("used", []))
             attrs[ATTR_UNUSED_COMPONENTS] = data.get("unused", [])
             attrs[ATTR_EXCLUDED_COMPONENTS] = data.get("excluded", [])
 
         elif key == SENSOR_HACS_UPDATES:
-            data = self.coordinator.data.get("updates", {})
+            data = coord_data.get("updates", {})
             attrs[ATTR_UPDATES] = data.get("updates", [])
             # Small scalars, kept recorded so automations can act on the AI
             # backlog and the card can show progress (#91).
@@ -3692,8 +3813,8 @@ class CustomComponentMonitorSensor(CoordinatorEntity, SensorEntity):
                 "unknown_requirement", 0
             )
 
-        if "last_scan" in self.coordinator.data:
-            attrs["last_scan"] = self.coordinator.data["last_scan"]
+        if "last_scan" in coord_data:
+            attrs["last_scan"] = coord_data["last_scan"]
 
         return attrs
 
@@ -3778,8 +3899,14 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             category = item.get("category", NEW_ITEM_CATEGORY_FALLBACK)
             by_category[category] = by_category.get(category, 0) + 1
 
+        coord_data = self.coordinator.data or {}
         attrs: dict[str, Any] = {
-            "component_provider": (self.coordinator.data or {}).get("provider"),
+            "component_provider": coord_data.get("provider"),
+            # Same scan-health block as the other five sensors (#114).
+            ATTR_DATA_STALE: bool(coord_data.get(ATTR_DATA_STALE, False)),
+            ATTR_LAST_SUCCESSFUL_SCAN: coord_data.get(ATTR_LAST_SUCCESSFUL_SCAN),
+            ATTR_SCAN_ERROR: coord_data.get(ATTR_SCAN_ERROR),
+            ATTR_STORE_STATUS: coord_data.get(ATTR_STORE_STATUS),
             ATTR_ITEMS: items,
             ATTR_BY_CATEGORY: by_category,
             ATTR_HIDDEN: hidden,
@@ -3790,9 +3917,7 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             ATTR_TOTAL_NEW: data.get("total_new", 0),
             "hacs_sync_pending": len(self.coordinator.new_items_registry.hacs_pending),
             "hacs_sync_last_error": self.coordinator.hacs_sync_last_error,
-            ATTR_HOME_COUNTRY: (self.coordinator.data or {}).get(
-                "new_items_home_country"
-            ),
+            ATTR_HOME_COUNTRY: coord_data.get("new_items_home_country"),
             ATTR_AI_ENABLED: self.coordinator.ai_enabled,
             # Counted over the full set, not the published slice: this drives
             # the card's "27 still being sorted" line, which is about the
@@ -3808,6 +3933,6 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
         pending = attrs[ATTR_AI_PENDING]
         attrs[ATTR_AI_RATE_PER_MINUTE] = self.coordinator.new_items_ai_rate_per_minute
         attrs[ATTR_AI_ETA_SECONDS] = self.coordinator.new_items_ai_eta_seconds(pending)
-        if self.coordinator.data and "last_scan" in self.coordinator.data:
-            attrs["last_scan"] = self.coordinator.data["last_scan"]
+        if "last_scan" in coord_data:
+            attrs["last_scan"] = coord_data["last_scan"]
         return attrs
