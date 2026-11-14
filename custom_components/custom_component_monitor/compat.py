@@ -11,7 +11,7 @@ This module only *compares*; whoever calls it decides which copy of
 ``hacs.json`` to hand over, and that choice is load-bearing. HACS and HA
 Marketplace surface one ``repository_manifest`` per repository with no record
 of which release it describes, so it answers for whatever version was last
-downloaded — not the one on offer. #116 is what that cost: the caller now
+downloaded — not the one on offer. #115 is what that cost: the caller now
 reads the offered release's own manifest and falls back to
 ``REASON_TARGET_UNREADABLE`` rather than believing a stale one.
 
@@ -48,7 +48,7 @@ REASON_NOT_DECLARED = "not_declared"
 REASON_UNREADABLE = "unreadable"
 REASON_HA_UNREADABLE = "ha_unreadable"
 #: The offered release's own ``hacs.json`` could not be read this scan, so
-#: nothing is known about what *it* requires (#116). Distinct from
+#: nothing is known about what *it* requires (#115). Distinct from
 #: ``not_declared`` on purpose: the component may well declare a minimum, we
 #: just could not get at the copy that counts.
 REASON_TARGET_UNREADABLE = "target_unreadable"
@@ -198,7 +198,7 @@ def requirement_counts(requirements: Any) -> dict[str, int]:
     """Count the ``blocked`` and ``unknown`` rows, for the sensor's scalars.
 
     One function rather than one expression per caller: the scan computes
-    these counts and the verification pass (#116) recomputes them after it has
+    these counts and the verification pass (#115) recomputes them after it has
     corrected the rows, and a count that disagreed with the rows it describes
     would be the same class of bug all over again. Anything that isn't a
     requirement dict counts as ``unknown``, never as fine.

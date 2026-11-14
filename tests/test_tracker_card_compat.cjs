@@ -144,7 +144,7 @@ function makeCard() {
   assert.deepEqual(Object.keys(card._ackUnknown), []);
   assert.equal(card._installAllowed('update.mystery'), false);
 
-  /* 4b. A release whose own requirements could not be read (#116, 1.21.0) --
+  /* 4b. A release whose own requirements could not be read (#115, 1.21.0) --
      The backend now re-reads hacs.json from the offered tag itself; when that
      read fails the row comes back unknown with reason "target_unreadable"
      rather than a stale carried-over value. */

@@ -1,4 +1,4 @@
-"""The requirement comes from the release on OFFER, not the one installed (#116).
+"""The requirement comes from the release on OFFER, not the one installed (#115).
 
 Every test in ``test_scan_updates_requirement.py`` hands the scanner a
 ``repository_manifest`` and an ``available_version`` that describe the same
@@ -70,7 +70,7 @@ def by_name(result: dict) -> dict:
 async def test_the_offered_release_overrides_the_stored_manifest(
     scanner, aioclient_mock
 ):
-    """#116 itself: stored says fine, the offered release says no.
+    """#115 itself: stored says fine, the offered release says no.
 
     The Microsoft 365 Calendar shape, with the versions abstracted so the
     test doesn't expire.
@@ -149,7 +149,7 @@ async def test_a_404_never_reads_as_compatible(scanner, aioclient_mock):
 
     A missing file is not a declaration of nothing — the tag may not exist
     under the name HACS reported. Treating it as an empty manifest would turn
-    a blocked update green, and keeping the stored answer would leave the #116
+    a blocked update green, and keeping the stored answer would leave the #115
     bug exactly as it was.
     """
     aioclient_mock.get(f"{RAW}/someone/gone/1.1.0/hacs.json", status=404)
@@ -301,7 +301,7 @@ async def test_the_counts_are_recomputed_from_the_corrected_rows(
     scanner, aioclient_mock
 ):
     """The scan's own counts describe the pre-correction rows, so they must not
-    be the ones published. #116 showed up as "7 updates / 2 incompatible" when
+    be the ones published. #115 showed up as "7 updates / 2 incompatible" when
     three were."""
     aioclient_mock.get(
         f"{RAW}/someone/one/1.1.0/hacs.json", json={"homeassistant": NEWER}

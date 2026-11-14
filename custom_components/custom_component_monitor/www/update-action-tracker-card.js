@@ -1051,7 +1051,7 @@ class UpdateActionTrackerCard extends HTMLElement {
         '<div class="compat-line ok"><span class="glyph met"></span> ' +
         '<span>Needs Home Assistant ' + reqVer + ' — you have it</span></div>';
     } else if (req.reason === "target_unreadable") {
-      /* #116: "unknown" is true but misleading here. The component may well
+      /* #115: "unknown" is true but misleading here. The component may well
          state a requirement — what failed is reading the copy that counts, the
          one in the release being offered. Say that, so the next scan's answer
          doesn't look like a contradiction. */
@@ -1128,7 +1128,7 @@ class UpdateActionTrackerCard extends HTMLElement {
           'manifest it ships.</span>' +
           '</span></div>';
       } else if (isUnknown) {
-        /* #116: a failed read is NOT "the component says nothing" — claiming
+        /* #115: a failed read is NOT "the component says nothing" — claiming
            that would be asserting something this card does not know. The
            headline says which of the two it is. */
         const unreadTarget = req.reason === "target_unreadable";

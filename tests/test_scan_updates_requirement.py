@@ -12,7 +12,7 @@ row that simply omits the requirement reads as "checked and fine":
 ⚠ Every test here hands the scanner a ``repository_manifest`` and an
 ``available_version`` that describe the same release, which is exactly the
 assumption production violates — see ``test_verify_update_requirements.py``
-(#116). What these tests pin is that ``scan_updates`` stays offline and gives
+(#115). What these tests pin is that ``scan_updates`` stays offline and gives
 every row *an* answer; the answer itself is corrected afterwards by
 ``ComponentScanner.async_verify_update_requirements``.
 """

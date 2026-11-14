@@ -171,7 +171,7 @@ SCAN_RETRY_MAX_INTERVAL = DEFAULT_SCAN_INTERVAL
 # misinformation.
 SCAN_STALE_GRACE = 86400  # 24 hours
 
-# --- Reading the OFFERED release's requirement (#116) ----------------------
+# --- Reading the OFFERED release's requirement (#115) ----------------------
 # HACS keeps exactly one hacs.json snapshot per repository, in
 # ``repository_manifest``, with no field recording which release it describes.
 # It only ever gets a ``homeassistant`` key from a direct GitHub read performed

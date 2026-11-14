@@ -45,7 +45,7 @@ def offline_target_manifests(request):
     """No test reaches GitHub unless it has said how it wants to be answered.
 
     Verifying a pending update's requirement reads the offered release's own
-    ``hacs.json`` over the network (#116), and that now happens on every
+    ``hacs.json`` over the network (#115), and that now happens on every
     coordinator refresh — so without this, most of this suite would quietly
     make real requests and its results would depend on GitHub being up.
 

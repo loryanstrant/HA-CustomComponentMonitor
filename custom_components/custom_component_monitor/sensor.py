@@ -236,7 +236,7 @@ class ComponentScanner:
         self._hacs_repositories: dict[str, Any] | None = None
         self.provider: str | None = None
         self._install_dates = install_dates
-        # (owner/repo, tag) -> that tag's own hacs.json (#116). Successes only,
+        # (owner/repo, tag) -> that tag's own hacs.json (#115). Successes only,
         # and only for tags still on offer — see
         # :meth:`async_verify_update_requirements`.
         self._target_manifest_cache: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1527,7 +1527,7 @@ class ComponentScanner:
                     # describes whichever release was last downloaded, so this
                     # is a starting point, not the answer:
                     # ``async_verify_update_requirements`` re-reads it from the
-                    # release actually on offer (#116).
+                    # release actually on offer (#115).
                     ATTR_HA_REQUIREMENT: ha_requirement(repo_manifest, HA_VERSION),
                 }
             )
@@ -1546,7 +1546,7 @@ class ComponentScanner:
             ),
         }
 
-    # -- the OFFERED release's requirement (#116) -----------------------------
+    # -- the OFFERED release's requirement (#115) -----------------------------
 
     async def async_verify_update_requirements(self, updates: dict[str, Any]) -> None:
         """Re-read each pending update's requirement from the tag on offer.
@@ -1554,7 +1554,7 @@ class ComponentScanner:
         :meth:`scan_updates` can only use what HACS stored, and HACS stores one
         ``hacs.json`` per repository with nothing saying which release it came
         from — so after a new release appears it still answers for the version
-        already installed. That is #116: Microsoft 365 Calendar v1.14.0 needs
+        already installed. That is #115: Microsoft 365 Calendar v1.14.0 needs
         Home Assistant 2026.11.0 and was shown as "needs 2025.6.0 — you have
         it", which is the installed v1.13.0's requirement, on a 2026.10.4
         house. Six of the other seven pending updates agreed by coincidence,
@@ -2177,7 +2177,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Update scan: %d pending updates", updates["count"])
 
             # The scan can only report what HACS stored, which is the
-            # *installed* version's declared Home Assistant minimum (#116).
+            # *installed* version's declared Home Assistant minimum (#115).
             # Re-read it from the release actually on offer. Never raises, and
             # a release it cannot read is reported as unchecked rather than
             # keeping the stale answer.
