@@ -16,8 +16,13 @@ This is candidate verification, not a published-release install test.
 | Version strings | `manifest.json` and all four `CARD_VERSION` constants read `1.20.0` |
 
 The full Python gate is `python -m pytest -q` against the repo's persistent venv.
-Hassfest and the HACS Action were not run locally; they run in CI on the pull
-request. There is no lint gate in this repo (AGENTS.md).
+There is no lint gate in this repo (AGENTS.md).
+
+Hassfest and the HACS Action were not run locally. They live in `validate.yaml`,
+which is a GitHub Actions workflow, and the pull request is on Gitea - Gitea
+Actions reported no runs for this branch. Those two checks therefore run once the
+branch reaches the GitHub mirror, and their result was **not** confirmed from this
+session.
 
 ## Live production evidence (read-only)
 
@@ -106,7 +111,8 @@ not closed.
 - **No published-release install test.** Installing 1.20.0 from the release and
   confirming the cards recover on the real stuck instance is the post-release check,
   and is the user's own install.
-- Hassfest and the HACS Action results come from CI on the pull request.
+- **Hassfest and the HACS Action are unconfirmed.** They are GitHub-side workflows and
+  this session could not read their result; check them on the mirror after merge.
 - Other installed components emit their own warnings in the production log; nothing
   here claims a clean log.
 
