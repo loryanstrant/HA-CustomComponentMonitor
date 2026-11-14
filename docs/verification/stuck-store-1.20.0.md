@@ -9,7 +9,7 @@ This is candidate verification, not a published-release install test.
 
 | Check | Result |
 | --- | --- |
-| Python regression suite | 590 passed; HA 2025.1.4, pytest-homeassistant-custom-component 0.13.205, pytest 8.3.4 |
+| Python regression suite | 591 passed; HA 2025.1.4, pytest-homeassistant-custom-component 0.13.205, pytest 8.3.4 |
 | JavaScript syntax | `node --check` passed on all four `www/*.js` modules (Node v22.23.4) |
 | Card ownership / stale / unavailable tests | `node tests/test_tracker_card.cjs` passed, including the new stale assertions |
 | Card compatibility tests | `node tests/test_tracker_card_compat.cjs` passed |
