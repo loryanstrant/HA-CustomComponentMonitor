@@ -150,6 +150,34 @@ Checked in the images below:
 - The counts the card's header uses (`updates_blocked`, `updates_unknown_requirement`)
   are recomputed after the verification pass, not before it.
 
+## Release outcome
+
+Released on 14 November 2026 at 8:45pm AEDT, on the owner's go-ahead for both the
+merge and the release.
+
+| Step | Result |
+| --- | --- |
+| Pull request 115 merged to Gitea `main` | `8154925`, merge commit |
+| Tag created **in Gitea first** | `v1.21.0` at `8154925` |
+| Gitea release published | canonical parity, same notes |
+| Push mirror synced | GitHub `main` and `refs/tags/v1.21.0` both resolve to `8154925` |
+| GitHub release published against the existing tag | release 445187606, not a draft, marked latest |
+| `release.yml` | completed/success; `custom_component_monitor.zip` attached, 291,291 bytes, state `uploaded` |
+| `validate.yml` on the tag | **HACS Validation success, Hassfest Validation success, Tests success** |
+
+The tag was created in Gitea before the GitHub release, so the 8-hourly prune-mode
+mirror keeps it rather than deleting it and drafting the release with it.
+
+The published zip was downloaded and opened rather than trusted: it unpacks to the
+*contents* of `custom_components/custom_component_monitor/` (16 entries, no
+`__pycache__` and no `.pyc`), `manifest.json` and all four `CARD_VERSION` constants
+read `1.21.0`, `sensor.py` carries `async_verify_update_requirements`, `const.py`
+carries `TARGET_MANIFEST_URL`, and `target_unreadable` is present in both `compat.py`
+and `update-action-tracker-card.js`. So the artefact HACS will install is the fix.
+
+Hassfest and the HACS Action, listed as pending above, have now run on the tag and
+both passed — that limit is closed.
+
 ## Remaining checks and limits
 
 - **The network cost is real and is the trade-off here.** The hourly refresh is also
@@ -164,6 +192,8 @@ Checked in the images below:
   belong to the HA development workflow, not to this session.
 - **No published-release install test.** Installing 1.21.0 from the release and
   confirming the Microsoft 365 - Calendar row flips to incompatible on the production
-  instance is the post-release check, and is the owner's own install.
-- **Hassfest and the HACS Action have not run** - see above; they run on `main` after
-  the merge is mirrored.
+  instance is the post-release check, and is the owner's own install. The expected
+  result is a header reading **3 incompatible** rather than today's 2, with Microsoft
+  365 - Calendar, Device Card and Local OpenAI LLM all held back.
+- **Hassfest and the HACS Action have now run and passed** on the `v1.21.0` tag - see
+  *Release outcome* above.
