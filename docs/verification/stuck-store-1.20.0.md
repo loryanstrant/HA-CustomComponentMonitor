@@ -18,11 +18,18 @@ This is candidate verification, not a published-release install test.
 The full Python gate is `python -m pytest -q` against the repo's persistent venv.
 There is no lint gate in this repo (AGENTS.md).
 
-Hassfest and the HACS Action were not run locally. They live in `validate.yaml`,
-which is a GitHub Actions workflow, and the pull request is on Gitea - Gitea
-Actions reported no runs for this branch. Those two checks therefore run once the
-branch reaches the GitHub mirror, and their result was **not** confirmed from this
-session.
+Hassfest and the HACS Action were not run. They live in `validate.yaml`, which is a
+GitHub Actions workflow; the pull request is on Gitea, where Actions is switched off
+for this repository entirely. The branch is also **not on the GitHub mirror** - listing the
+mirror's branches shows `main` at the same commit as Gitea's `main`, and no
+`claude/f1a30679a824-*` ref - so neither check can have run yet. They first run on
+`main` after the merge is mirrored.
+
+What was checked locally instead: the only change this branch makes to a file those
+two checks look at is the version string, `1.19.0` to `1.20.0` in `manifest.json`
+(`hacs.json` is untouched). Both files parse, the manifest carries every key hassfest
+requires, `iot_class` is a valid value, the keys are still in the expected order, and
+`hacs.json`'s `filename` still matches the asset name `release.yaml` uploads.
 
 ## Live production evidence (read-only)
 
@@ -111,8 +118,9 @@ not closed.
 - **No published-release install test.** Installing 1.20.0 from the release and
   confirming the cards recover on the real stuck instance is the post-release check,
   and is the user's own install.
-- **Hassfest and the HACS Action are unconfirmed.** They are GitHub-side workflows and
-  this session could not read their result; check them on the mirror after merge.
+- **Hassfest and the HACS Action have not run.** They are GitHub-side workflows and the
+  branch has not reached the mirror; check them on `main` after the merge is mirrored.
+  The metadata they validate was checked by hand instead, as described above.
 - Other installed components emit their own warnings in the production log; nothing
   here claims a clean log.
 
