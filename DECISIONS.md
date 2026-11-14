@@ -700,3 +700,93 @@ principle decides every tie downstream: when two sources disagree about whether 
 install is safe, the answer is the restrictive one, because the costs are not
 symmetric — a wrong warning is read and overridden in a second, and a wrong
 clearance is a rollback by hand.
+
+## 2026-11-14 — A status flag is not the data, and `UpdateFailed` is not a diagnosis (1.20.0)
+
+Issue #114: every card blank after the 1.19.0 upgrade. Read live on the production
+instance, the cards were innocent — all six sensors had been `unavailable` since
+08:21:49 and every scan had failed with *"Hacs is starting; component data will retry
+automatically."*, 65 times in half an hour. The component data on disk was complete and
+correct the entire time.
+
+HACS 2.0.5 was the cause, and permanently. That store holds two rows for one repository
+name (`Joery/hass-afvalhulp`, the only duplicate in 6,454), so `set_repository_id` raises
+out of `startup_tasks` — *after* `status.startup` is cleared and *before* the running
+stage is set. `stage` therefore stays `"startup"` for the whole uptime of Home Assistant:
+the log never prints the running line, and nothing recovers without a restart. Upstream
+has closed this as fixed in the Marketplace that ships with Home Assistant 2026.11; HACS
+itself has no release carrying the fix.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| What a failed scan does to data it already has | **Keeps it, flags `data_stale`, stays successful** | `UpdateFailed` — which is what it did |
+| What the legacy-HACS file read requires | **Loaded, enabled, intact** (`require_readable`) | Also "finished starting" (`require_ready`), as before |
+| Where "starting" still decides the answer | **An empty file while starting** — a file not yet filled in | Nowhere; or everywhere, as before |
+| How long stale data is served | **24 hours**, then honestly unavailable | Forever; one scan interval |
+| Retry pacing after a failure | **30 s doubling to the hourly interval**, reset on success | A fixed 30 s, as before |
+| Where the user is told | **On the card** — a drawn ◐ plus the word "Stale", the age, and the reason | The log; a sensor attribute only |
+
+**Why the strict gate was the wrong question.** `require_ready()` asks whether the
+provider has finished starting, which is the right question before touching its live
+in-memory objects — a half-built index is genuinely unusable. It is the wrong question to
+ask of a *file*. HACS writes `.storage/hacs.repositories` itself and only ever writes a
+complete one, so the file's contents are the evidence; the status flag is hearsay about an
+unrelated object. The 1.18.0 boundary applied the strict gate to both, which is how one
+stuck flag withheld data that was sitting there readable. The residual case is kept: a
+file that is *empty* while the provider is starting is one HACS has not finished writing,
+and publishing zero components from it would read as "everything was uninstalled".
+
+**This qualifies the 2026-11-09 lesson rather than reversing it.** "A readable stale file
+is worse than an honest unavailable state" was written about a *retired* file — reading
+`hacs.repositories` after the owner had migrated to Marketplace, where it is an abandoned
+snapshot of a store somebody else now owns. That still holds, and the Marketplace path is
+untouched: it still requires full readiness, still refuses to fall back, still raises
+rather than returning an empty collection. The 1.20.0 case is the *current* file of the
+*active* owner, which is a different claim entirely — and the honest-unavailable half of
+that lesson turned out to have a cost nobody had priced: six unavailable sensors are not
+read as "the store is starting", they are read as "the integration is broken", because
+the only place that said otherwise was the log.
+
+**Why staleness is marked rather than silent, and why it expires.** `UpdateFailed` is a
+single verdict covering two very different situations, and `CoordinatorEntity` turns both
+into the same blank. A cold start has nothing to be stale about and still fails honestly.
+A failure *with* data behind it now keeps that data and publishes four small scalars —
+`data_stale`, `last_successful_scan`, `scan_error`, `store_status` — so the cards can say
+which scan they are showing and why it is the newest one. They are capped at 24 hours
+because "from yesterday" and "from last week" are not equally useful; past the grace
+period the old blank is the truthful answer. The two states are mutually exclusive by
+construction: there is no last good scan to be stale about on the path that renders
+Unavailable.
+
+**Why the backoff shipped in the same change.** The failed-scan interval was pinned at
+30 s and left there, which assumes the cause is transient. This one was not: 120 failed
+scans an hour, each logging the same error line, for as long as Home Assistant stayed up.
+The interval now doubles up to the ordinary hourly one and the log line is deduplicated by
+message, so a startup race still recovers in seconds and a permanent fault costs the same
+as a working scan.
+
+**The test gap, which is the part worth carrying.** 1.18.0's suite had a test for a
+starting store and it asserted that refusing to read was *correct*. The fixture
+(`manager()`) builds `stage="running"`, so every other test described a store that had
+finished starting, and the one test that described the real production state pinned the
+bug as the specification. Live testing did not catch it either: DEV and TEST1 run Home
+Assistant 2026.11 with Marketplace and have no HACS at all, and TEST2 — which does have
+HACS 2.0.5 — printed the same "HACS starting" line during the 9 November test run, was
+correctly read as benign because it recovered seconds later, and has no duplicated
+repository name to get stuck on. Production's duplicate row was re-fetched on 12
+November, three days after those tests. So the fault was unreachable on every instance
+that was tested, on the day it was tested.
+
+**Lesson:** a test that asserts the current behaviour of a guard is not a test of the
+guard's *premise*. "Refusing a starting store is correct" and "a starting store cannot be
+read" are different claims, and only the first was ever tested — so the suite grew a test
+whose job was to keep the bug. When a fixture only ever builds the healthy value of a
+status field, every test in the file is silently about the healthy case; the state that
+matters is the one production is actually in, and it is worth asking which instance could
+even reach it before concluding that a live test cleared the change.
+
+**Second lesson:** `UpdateFailed` is a diagnosis, not an error handler. It means "I have
+nothing to show you", and reaching for it on every exception tells six entities to go
+blank over a condition that may not affect the data at all. Separate *the scan failed*
+from *there is nothing to show*, and the user keeps what they already had — with a label
+saying how old it is, which is strictly more information than a blank card.

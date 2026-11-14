@@ -6,7 +6,7 @@
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.19.0";
+const CARD_VERSION = "1.20.0";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
@@ -27,6 +27,43 @@ function hniFormatNumber(n) {
   const num = Number(n);
   if (!Number.isFinite(num)) return String(n);
   return num.toLocaleString("en-US");
+}
+
+/**
+ * How long ago the last good scan was, in words. The integration stops serving
+ * stale data after 24 hours (SCAN_STALE_GRACE), so minutes and hours cover
+ * every age this can be asked about.
+ */
+function hniStaleAgo(iso) {
+  const then = Date.parse(iso);
+  if (!iso || Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "a moment ago";
+  if (mins < 60) return mins + " minute" + (mins === 1 ? "" : "s") + " ago";
+  const hours = Math.round(mins / 60);
+  return hours + " hour" + (hours === 1 ? "" : "s") + " ago";
+}
+
+/**
+ * The "this is the last good scan" notice (#114).
+ *
+ * The sensor stays available and keeps serving the last successful scan when a
+ * scan fails, instead of the card going blank - which is what 1.19.0 did. The
+ * trade is that the list on screen can be old, so it has to say so: a drawn
+ * half-filled mark plus the word "Stale", never colour alone.
+ */
+function hniStaleNoticeHtml(attrs) {
+  if (!attrs || !attrs.data_stale) return "";
+  const ago = hniStaleAgo(attrs.last_successful_scan);
+  const err = attrs.scan_error ? String(attrs.scan_error) : "";
+  return (
+    '<div class="stale-note" role="status">' +
+    '<span class="glyph stale"></span>' +
+    "<span><strong>Stale</strong> &mdash; showing the last good scan" +
+    (ago ? " from " + ago : "") + ". The newest scan failed" +
+    (err ? ": " + hniEscapeHtml(err) : ".") +
+    "</span></div>"
+  );
 }
 
 function hniFormatAge(days) {
@@ -374,6 +411,7 @@ class HacsNewItemsCard extends HTMLElement {
       '<div class="title"></div>' +
       '<div class="subtitle"></div>' +
       "</div>" +
+      '<div class="stale"></div>' +
       '<div class="filters"></div>' +
       '<div class="selection-bar"></div>' +
       '<div class="groups"></div>' +
@@ -385,6 +423,7 @@ class HacsNewItemsCard extends HTMLElement {
       card: this.shadowRoot.querySelector("ha-card"),
       title: this.shadowRoot.querySelector(".title"),
       subtitle: this.shadowRoot.querySelector(".subtitle"),
+      stale: this.shadowRoot.querySelector(".stale"),
       filters: this.shadowRoot.querySelector(".filters"),
       selectionBar: this.shadowRoot.querySelector(".selection-bar"),
       groups: this.shadowRoot.querySelector(".groups"),
@@ -611,6 +650,10 @@ class HacsNewItemsCard extends HTMLElement {
     const items = Array.isArray(attrs.items) ? attrs.items : [];
     this._pruneSelection(items);
 
+    /* #114: the sensor is available, but the newest scan failed - everything
+       below is the last good scan, and says so. */
+    this._els.stale.innerHTML = hniStaleNoticeHtml(attrs);
+
     /* Subtitle: "N to review · N hidden · N still being sorted", each clause
        omitted when its count is zero (ai_pending can additionally be absent).
        When the sensor held rows back (NEW_ITEMS_MAX_EXPOSED), the clause reads
@@ -746,6 +789,8 @@ class HacsNewItemsCard extends HTMLElement {
     this._groupKeys = {};
     this._els.subtitle.textContent = "";
     this._els.subtitle.style.display = "none";
+    // No last good scan to be stale when there is no data at all (#114).
+    this._els.stale.innerHTML = "";
     this._els.filters.innerHTML = "";
     this._els.selectionBar.classList.remove("visible");
     this._els.selectionBar.innerHTML = "";
@@ -998,11 +1043,21 @@ class HacsNewItemsCard extends HTMLElement {
       "  --hni-accent: var(--primary-color, #03a9f4);",
       "  --hni-divider: var(--divider-color, rgba(0,0,0,0.12));",
       "  --hni-error: var(--error-color, #db4437);",
+      "  --hni-warn: var(--label-badge-yellow, #ff9800);",
       "}",
       "ha-card { padding: 16px; }",
       ".header { margin-bottom: 12px; }",
       ".title { font-size:1.1em; font-weight:500; color:var(--hni-primary); }",
       ".subtitle { font-size:0.82em; color:var(--hni-secondary); margin-top:2px; }",
+      /* #114: the last-good-scan notice. The mark is DRAWN rather than typed -
+         U+25D0 as a text character renders at about a third the size of its
+         siblings on some platforms, which breaks the one distinction a
+         colour-blind reader relies on. Same glyph as the compatibility marks
+         in update-action-tracker-card.js. */
+      ".glyph { display:inline-block; width:0.72em; height:0.72em; box-sizing:border-box; border:1.5px solid currentColor; border-radius:50%; flex-shrink:0; position:relative; top:0.2em; }",
+      ".glyph.stale { background:linear-gradient(to right, currentColor 50%, transparent 50%); }",
+      ".stale-note { display:flex; align-items:flex-start; gap:6px; margin:0 0 12px; padding:8px 10px; border-radius:8px; font-size:0.8em; line-height:1.4; color:var(--hni-primary); background:rgba(255,152,0,0.14); border-left:3px solid var(--hni-warn); }",
+      ".stale-note strong { font-weight:600; }",
       /* Type filter chips - same idiom as .filters/.chip in
          update-action-tracker-card.js (see the written report for exact lines). */
       ".filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }",

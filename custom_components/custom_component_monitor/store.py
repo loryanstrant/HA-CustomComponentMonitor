@@ -28,10 +28,42 @@ class Provider:
     domain: str
     manager: Any = None
 
-    def require_ready(self) -> None:
-        """Fail immediately instead of waiting inside HA platform setup."""
+    @property
+    def label(self) -> str:
+        """How this provider is spelled to a person.
+
+        ``domain.title()`` renders "hacs" as "Hacs", which 1.20.0 put in front
+        of people for the first time by quoting the scan error on the cards
+        (#114). Keep the storage spelling at the boundary and the brand's own
+        spelling in the message.
+        """
+        return {"hacs": "HACS", "marketplace": "Marketplace"}.get(self.domain, self.domain.title())
+
+    @property
+    def starting(self) -> bool:
+        """Whether the provider still claims to be starting up.
+
+        Read, never trusted as a verdict about the *data*. HACS 2.0.5 can
+        leave this true for the whole uptime of Home Assistant: a duplicate
+        repository row makes ``set_repository_id`` raise out of its startup
+        tasks between clearing ``status.startup`` and setting the running
+        stage, so ``stage`` stays "startup" permanently while its storage file
+        on disk is complete and correct (#114).
+        """
+        status = getattr(self.manager, "status", None)
+        stage = getattr(self.manager, "stage", None)
+        return bool(getattr(status, "startup", False)) or stage in ("setup", "startup")
+
+    def require_readable(self) -> None:
+        """Loaded, intact and not disabled — the floor for reading anything.
+
+        Everything :meth:`require_ready` checks *except* whether startup has
+        finished. Reading an on-disk snapshot only needs the owner to exist
+        and be enabled; waiting for its stage to advance is a separate, and
+        stricter, question (#114).
+        """
         if self.manager is None:
-            raise StoreUnavailable(f"{self.domain.title()} is not loaded; check its integration and retry Scan now.")
+            raise StoreUnavailable(f"{self.label} is not loaded; check its integration and retry Scan now.")
         system = getattr(self.manager, "system", None)
         status = getattr(self.manager, "status", None)
         if self.domain == "marketplace" and (
@@ -40,10 +72,18 @@ class Provider:
         ):
             raise StoreUnavailable("Marketplace readiness interface changed; check for a compatible monitor update.")
         if getattr(system, "disabled", False):
-            raise StoreUnavailable(f"{self.domain.title()} is disabled; check its integration and retry Scan now.")
-        stage = getattr(self.manager, "stage", None)
-        if getattr(status, "startup", False) or stage in ("setup", "startup"):
-            raise StoreUnavailable(f"{self.domain.title()} is starting; component data will retry automatically.")
+            raise StoreUnavailable(f"{self.label} is disabled; check its integration and retry Scan now.")
+
+    def require_ready(self) -> None:
+        """Fail immediately instead of waiting inside HA platform setup.
+
+        The strict gate: readable *and* finished starting. Required before
+        reading a provider's live in-memory objects or writing to them, where
+        a half-built index really is unusable.
+        """
+        self.require_readable()
+        if self.starting:
+            raise StoreUnavailable(f"{self.label} is starting; component data will retry automatically.")
 
 
 def resolve_provider(hass: HomeAssistant) -> Provider:
@@ -109,9 +149,14 @@ async def async_repository_snapshot(hass: HomeAssistant) -> tuple[str, dict[str,
             raise StoreUnavailable("Marketplace repository interface changed; check for a compatible monitor update.") from err
 
     # Legacy HACS keeps its established on-disk format. A configured but
-    # unloaded HACS is not a licence to scan its last saved file.
+    # unloaded HACS is not a licence to scan its last saved file — but a
+    # loaded one that never finished starting is a different case, and
+    # refusing it was what broke every card in 1.19.0 (#114). HACS writes
+    # that file itself and only writes a complete one, so the strict gate is
+    # the wrong question to ask of a file: read it, and judge the *data*
+    # below.
     if provider.manager is not None or hass.config_entries.async_entries("hacs"):
-        provider.require_ready()
+        provider.require_readable()
     path = Path(hass.config.path(".storage/hacs.repositories"))
 
     def read() -> dict[str, Any]:
@@ -123,4 +168,35 @@ async def async_repository_snapshot(hass: HomeAssistant) -> tuple[str, dict[str,
         except (OSError, ValueError) as err:
             raise StoreUnavailable("HACS repository data cannot be read; check HACS is loaded and retry Scan now.") from err
 
-    return provider.domain, await hass.async_add_executor_job(read)
+    snapshot = await hass.async_add_executor_job(read)
+    # The one case where "still starting" does decide the answer: an empty
+    # store while HACS is mid-startup is a file it has not finished filling
+    # in, and publishing zero components from it would read as "everything
+    # was uninstalled". A readable stale file is worse than an honest
+    # unavailable state (DECISIONS.md, 2026-11-09) — and so is a readable
+    # empty one.
+    if not snapshot and provider.starting:
+        raise StoreUnavailable(f"{provider.label} is starting; component data will retry automatically.")
+    return provider.domain, snapshot
+
+
+def store_status(hass: HomeAssistant) -> dict[str, Any]:
+    """Describe the active provider without reading any repository data.
+
+    Separate from :func:`async_repository_snapshot` rather than folded into
+    its return value, so that function's ``(domain, snapshot)`` contract is
+    unchanged. Published on the sensors so "the monitor is stuck" can be
+    diagnosed from the entity attributes instead of the log: a provider
+    reporting ``starting`` long after Home Assistant came up is HACS's
+    startup having failed, not the monitor's (#114).
+    """
+    provider = resolve_provider(hass)
+    manager = provider.manager
+    stage = getattr(manager, "stage", None)
+    return {
+        "provider": provider.domain,
+        "loaded": manager is not None,
+        "disabled": bool(getattr(getattr(manager, "system", None), "disabled", False)),
+        "stage": stage if isinstance(stage, str) else None,
+        "starting": provider.starting,
+    }
