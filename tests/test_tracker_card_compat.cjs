@@ -144,6 +144,53 @@ function makeCard() {
   assert.deepEqual(Object.keys(card._ackUnknown), []);
   assert.equal(card._installAllowed('update.mystery'), false);
 
+  /* 4b. A release whose own requirements could not be read (#116, 1.21.0) --
+     The backend now re-reads hacs.json from the offered tag itself; when that
+     read fails the row comes back unknown with reason "target_unreadable"
+     rather than a stale carried-over value. */
+  const unread = makeCard();
+  const unreadAttrs = unread.states['sensor.hacs_updates'].attributes;
+  unreadAttrs.updates.push({
+    entity_id: 'update.unreadable_target', name: 'Microsoft 365 - Calendar',
+    ha_requirement: req('unknown', null, '2026.10.4', 'target_unreadable'),
+  });
+  unread.states['update.unreadable_target'] = {
+    state: 'on',
+    attributes: { friendly_name: 'Microsoft 365 - Calendar update', installed_version: '1.13.1', latest_version: '1.14.0' },
+  };
+  unread.card._releaseNotes['update.unreadable_target'] = 'notes';
+  unread.card._hacsEntities = null; // force _getHacsUpdateEntities to re-resolve ownership
+  unread.card._hass.callWS = async () => ({
+    'update.ok': { domain: 'hacs' }, 'update.ok2': { domain: 'hacs' },
+    'update.blocked': { domain: 'hacs' }, 'update.mystery': { domain: 'hacs' },
+    'update.unreadable_target': { domain: 'hacs' },
+  });
+  unread.card._expandedEntity = 'update.unreadable_target';
+  await unread.card._doRender();
+  html = unread.card.shadowRoot.innerHTML;
+  const unreadRow = rowOf(html, 'update.unreadable_target');
+  assert.match(
+    unreadRow,
+    /Requirement couldn't be checked/,
+    'a failed read says so, rather than claiming the release declares nothing'
+  );
+  assert.doesNotMatch(unreadRow, /compat-line ok/, 'never shown as compatible');
+  assert.doesNotMatch(
+    unreadRow,
+    /does not say which Home Assistant it needs/,
+    'that headline asserts something a failed read cannot know'
+  );
+  assert.match(
+    unreadRow,
+    /Version 1\.14\.0's own requirements could not be read\./
+  );
+  assert.match(
+    unreadRow,
+    /read from the release being offered, not from the copy HACS has cached/
+  );
+  assert.equal(unread.card._installAllowed('update.unreadable_target'), false);
+  assert.ok(!Array.from(unread.card._eligibleEntities).includes('update.unreadable_target'), 'not in the eligible set');
+
   /* 5. Bulk always passes the explicit eligible set ------------------------ */
   await card._doRender();
   await card._handleUpdateAll();

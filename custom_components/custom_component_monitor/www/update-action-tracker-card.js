@@ -4,7 +4,7 @@
  * Skip, Update, and Update & Action buttons.
  */
 
-const CARD_VERSION = "1.20.0";
+const CARD_VERSION = "1.21.0";
 const UAT_DOMAIN = "custom_component_monitor";
 // #91: AI summaries and the ai_enabled flag live here, not on the update.*
 // entities. Both the card and its editor read it.
@@ -1050,6 +1050,14 @@ class UpdateActionTrackerCard extends HTMLElement {
       compatLineHtml =
         '<div class="compat-line ok"><span class="glyph met"></span> ' +
         '<span>Needs Home Assistant ' + reqVer + ' — you have it</span></div>';
+    } else if (req.reason === "target_unreadable") {
+      /* #116: "unknown" is true but misleading here. The component may well
+         state a requirement — what failed is reading the copy that counts, the
+         one in the release being offered. Say that, so the next scan's answer
+         doesn't look like a contradiction. */
+      compatLineHtml =
+        '<div class="compat-line unknown"><span class="glyph unknown"></span> ' +
+        "<span>Requirement couldn't be checked</span></div>";
     } else {
       compatLineHtml =
         '<div class="compat-line unknown"><span class="glyph unknown"></span> ' +
@@ -1120,19 +1128,29 @@ class UpdateActionTrackerCard extends HTMLElement {
           'manifest it ships.</span>' +
           '</span></div>';
       } else if (isUnknown) {
+        /* #116: a failed read is NOT "the component says nothing" — claiming
+           that would be asserting something this card does not know. The
+           headline says which of the two it is. */
+        const unreadTarget = req.reason === "target_unreadable";
         const why = req.reason === "unreadable"
           ? "The component states a requirement this card cannot compare" +
             (reqVer ? " (&ldquo;" + reqVer + "&rdquo;)" : "") + "."
           : req.reason === "ha_unreadable"
             ? "This Home Assistant's own version could not be compared, so the check could not run."
-            : "The component's HACS manifest names no minimum Home Assistant version.";
+            : unreadTarget
+              ? "The requirement is read from the release being offered, not from the copy HACS has cached — and that read failed this time. The next scan tries again."
+              : "The component's HACS manifest names no minimum Home Assistant version.";
         html +=
           '<div class="compat-warn unknown">' +
           '<span class="glyph unknown"></span>' +
           '<span class="warn-body">' +
-          '<strong>Version ' + latestVer + ' does not say which Home Assistant it needs.</strong> ' +
-          'That is not the same as saying it works on ' +
-          (haVer ? haVer : "this version") + '. It may install and then fail to load.' +
+          (unreadTarget
+            ? '<strong>Version ' + latestVer + "'s own requirements could not be read.</strong> " +
+              'So there is no way to know whether it runs on ' +
+              (haVer ? haVer : "this version") + '. Check its release notes below before updating.'
+            : '<strong>Version ' + latestVer + ' does not say which Home Assistant it needs.</strong> ' +
+              'That is not the same as saying it works on ' +
+              (haVer ? haVer : "this version") + '. It may install and then fail to load.') +
           '<span class="warn-why">' + why + '</span>' +
           '</span></div>';
       }

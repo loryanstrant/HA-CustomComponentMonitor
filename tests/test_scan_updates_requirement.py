@@ -8,6 +8,13 @@ row that simply omits the requirement reads as "checked and fine":
 * the live-entity reconciliation, where HACS has surfaced an update the
   snapshot hasn't caught up with yet — the row is built from the entity, so the
   manifest has to be looked up separately.
+
+⚠ Every test here hands the scanner a ``repository_manifest`` and an
+``available_version`` that describe the same release, which is exactly the
+assumption production violates — see ``test_verify_update_requirements.py``
+(#116). What these tests pin is that ``scan_updates`` stays offline and gives
+every row *an* answer; the answer itself is corrected afterwards by
+``ComponentScanner.async_verify_update_requirements``.
 """
 from __future__ import annotations
 

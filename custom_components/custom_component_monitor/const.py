@@ -171,6 +171,43 @@ SCAN_RETRY_MAX_INTERVAL = DEFAULT_SCAN_INTERVAL
 # misinformation.
 SCAN_STALE_GRACE = 86400  # 24 hours
 
+# --- Reading the OFFERED release's requirement (#116) ----------------------
+# HACS keeps exactly one hacs.json snapshot per repository, in
+# ``repository_manifest``, with no field recording which release it describes.
+# It only ever gets a ``homeassistant`` key from a direct GitHub read performed
+# for the version being downloaded at the time — HACS's catalogue feeds publish
+# that key for none of their rows — so once a newer release appears the
+# snapshot still answers for the version already installed. v1.19.0 compared
+# that answer against the running HA and labelled the *offered* update with it,
+# which is how Microsoft 365 Calendar v1.14.0 (really 2026.11.0) was shown as
+# "needs 2025.6.0 — you have it" on a 2026.10.4 house.
+#
+# So the requirement is re-read from the offered release's own tag. Tag
+# contents are immutable, so a success is cached for the life of the process
+# and this costs one small read per newly-offered update.
+TARGET_MANIFEST_URL = "https://raw.githubusercontent.com/{full_name}/{ref}/hacs.json"
+# Per request. raw.githubusercontent is usually tens of milliseconds, so this
+# is only reached by a request that is effectively hung.
+TARGET_MANIFEST_TIMEOUT = 10
+# For the whole pass, across every update, and the only number that bounds how
+# long a *user* can be made to wait. The pass runs inside the coordinator
+# refresh, and that refresh is awaited by the config-entry setup and by the
+# install services when they meet an update the last scan had not seen — so
+# with GitHub unreachable this is the worst-case stall on pressing Update, and
+# the worst-case delay to the integration's startup. Deliberately well short of
+# Home Assistant's own slow-setup patience: whatever has not answered by here
+# is reported as "couldn't check" and retried on the next scan, which is the
+# safe direction. Healthy, four at a time, this clears dozens of updates in a
+# couple of seconds.
+TARGET_MANIFEST_BUDGET = 25
+# Reads in flight at once. Small on purpose: these are unauthenticated and a
+# house with thirty pending updates should not look like a scraper.
+TARGET_MANIFEST_CONCURRENCY = 4
+# Stop reading a response after this much. A hacs.json is a few hundred bytes;
+# this is the same bounded-read habit as the local bundle scans in sensor.py,
+# so a misconfigured or hostile body cannot be pulled into memory whole.
+TARGET_MANIFEST_MAX_BYTES = 262_144
+
 # --- Update Action Tracker (merged from HACS-Update-Action-Tracker) ---
 STORAGE_KEY = "custom_component_monitor.update_actions"
 STORAGE_VERSION = 1

@@ -1,12 +1,19 @@
 """Will the offered update actually run on this Home Assistant?
 
-HACS and HA Marketplace both surface a repository's ``hacs.json`` as
-``repository_manifest``, and its ``homeassistant`` key is the minimum Home
-Assistant version the component declares. HACS enforces it on *install*, which
-is exactly the problem this module exists for: the requirement is real, it is
+A component's ``hacs.json`` carries a ``homeassistant`` key: the minimum Home
+Assistant version it declares. HACS enforces it on *install*, which is exactly
+the problem this module exists for: the requirement is real, it is
 machine-readable, and nothing shows it to the user before the install fails —
 or, as with Microsoft 365 Calendar, before an install that should have been
 refused goes ahead and has to be rolled back by hand.
+
+This module only *compares*; whoever calls it decides which copy of
+``hacs.json`` to hand over, and that choice is load-bearing. HACS and HA
+Marketplace surface one ``repository_manifest`` per repository with no record
+of which release it describes, so it answers for whatever version was last
+downloaded — not the one on offer. #116 is what that cost: the caller now
+reads the offered release's own manifest and falls back to
+``REASON_TARGET_UNREADABLE`` rather than believing a stale one.
 
 Three answers, and the third is first-class:
 
@@ -40,6 +47,11 @@ STATE_UNKNOWN = "unknown"
 REASON_NOT_DECLARED = "not_declared"
 REASON_UNREADABLE = "unreadable"
 REASON_HA_UNREADABLE = "ha_unreadable"
+#: The offered release's own ``hacs.json`` could not be read this scan, so
+#: nothing is known about what *it* requires (#116). Distinct from
+#: ``not_declared`` on purpose: the component may well declare a minimum, we
+#: just could not get at the copy that counts.
+REASON_TARGET_UNREADABLE = "target_unreadable"
 
 # A version string has to be comparable to be worth comparing. AwesomeVersion
 # accepts a lot: ">=2026.11.0" parses as UNKNOWN and raises on comparison, and
@@ -128,6 +140,22 @@ def ha_requirement(
     return result
 
 
+def target_unreadable_requirement(installed_ha_version: str | None) -> dict[str, Any]:
+    """The answer when the offered release's own ``hacs.json`` could not be read.
+
+    Deliberately shaped like any other ``unknown``: ``required`` is ``None``
+    because nothing was read, not because nothing was declared. Merge it over
+    a stale answer with :func:`strictest` — that keeps a known ``blocked`` and
+    discards a stale ``met``, which is the whole point.
+    """
+    return {
+        "state": STATE_UNKNOWN,
+        "required": None,
+        "installed": (installed_ha_version or "").strip() or None,
+        "reason": REASON_TARGET_UNREADABLE,
+    }
+
+
 def is_blocked(requirement: Any) -> bool:
     """True only for a requirement positively established as unmet."""
     return isinstance(requirement, dict) and requirement.get("state") == STATE_BLOCKED
@@ -164,6 +192,29 @@ def strictest(requirements: Any) -> dict[str, Any] | None:
         if rank > best_rank:
             best, best_rank = requirement, rank
     return best
+
+
+def requirement_counts(requirements: Any) -> dict[str, int]:
+    """Count the ``blocked`` and ``unknown`` rows, for the sensor's scalars.
+
+    One function rather than one expression per caller: the scan computes
+    these counts and the verification pass (#116) recomputes them after it has
+    corrected the rows, and a count that disagreed with the rows it describes
+    would be the same class of bug all over again. Anything that isn't a
+    requirement dict counts as ``unknown``, never as fine.
+    """
+    counts = {"blocked": 0, "unknown_requirement": 0}
+    for requirement in requirements or []:
+        state = (
+            requirement.get("state", STATE_UNKNOWN)
+            if isinstance(requirement, dict)
+            else STATE_UNKNOWN
+        )
+        if state == STATE_BLOCKED:
+            counts["blocked"] += 1
+        elif state == STATE_UNKNOWN:
+            counts["unknown_requirement"] += 1
+    return counts
 
 
 def block_sentence(name: str, requirement: dict[str, Any]) -> str:
