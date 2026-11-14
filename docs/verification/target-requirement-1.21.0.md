@@ -46,6 +46,46 @@ on 10 June 2025 and has never appeared in a release. Home Assistant 2026.11's bu
 Marketplace checks the offered release correctly. So there is no upstream fix to wait
 for on the version in use.
 
+## The fetch, checked against the live production updates
+
+The one thing a mocked test cannot settle is whether the URL this builds resolves
+for real repositories. It does, for all seven pending updates on the production
+instance. Checked 14 November 2026 at approximately 20:30 AEDT by reading the
+`update.*` entities (read-only) and fetching each manifest directly.
+
+The tag is taken from the entity's `latest_version` **verbatim**, and that turns out
+to be load-bearing: HACS reports the GitHub tag, prefix included, and the prefix is
+not consistent across repositories. `update.microsoft_365_calendar_update` reports
+`v1.14.0`; `update.device_card_update` reports `2.1.0`. Normalising either way would
+404 half of them.
+
+| Repository | Offered tag | Fetch | Declares |
+| --- | --- | --- | --- |
+| `RogerSelwyn/MS365-Calendar` | `v1.14.0` | 200 | 2026.11.0 |
+| `homeassistant-extras/device-card` | `2.1.0` | 200 | 2026.11.0 |
+| `skye-harris/hass_local_openai_llm` | `1.15.1` | 200 | 2026.11.0 |
+| `acosta290/fluvy` | `v1.20.0` | 200 | 2026.9.0 |
+| `Mastershort/neonplan3d` | `v3.2.0` | 200 | 2025.1.0 |
+| `Matysh/houseplan-card` | `v1.85.2` | 200 | 2024.6.0 |
+| `teuchezh/dynamic-weather-card` | `v2026.11.2` | 200 | 2024.1.0 |
+
+7 of 7 answered, so the `target_unreadable` path is the exception it is designed to
+be rather than the common case. `v1.14.0`'s manifest declares `"homeassistant":
+"2026.11.0"` — the value the card should have been showing — while `1.14.0` without
+the prefix returns 404, which is why a 404 is treated as "could not read" and never
+as "declares nothing".
+
+Production runs **core-2026.10.4** (Home Assistant Container; HACS 2.0.5, stage
+`startup`), so the true verdict for those seven is **3 blocked, 0 unknown**. Read at
+the same moment, `sensor.hacs_updates` published `updates_blocked: 2`,
+`updates_unknown_requirement: 0` from a scan that had succeeded minutes earlier — the
+fault still live, under-reporting by exactly one, which is the discrepancy originally
+reported. After 1.21.0 is installed the header should read **3 incompatible**.
+
+(Incidentally the same read confirms 1.20.0 working: HACS is still stuck on `startup`
+and the sensor nevertheless carries a fresh successful scan with `data_stale: false`,
+because the relaxed gate now reads the storage file rather than the status flag.)
+
 ## Offline card rendering
 
 The real `update-action-tracker-card.js` module was loaded in a static harness with a
