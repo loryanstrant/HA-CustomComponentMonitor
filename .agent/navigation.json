@@ -10,7 +10,7 @@
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 111
+    "file_count": 112
   },
   "start_here": {
     "readme": "README.md",
@@ -72,7 +72,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 853,
+      "lines": 963,
       "headings": [
         {
           "level": 2,
@@ -183,6 +183,21 @@
           "level": 2,
           "text": "2026-11-14 — A manifest with no record of which release it describes can't judge a different release (1.21.0)",
           "anchor": "2026-11-14--a-manifest-with-no-record-of-which-release-it-describes-cant-judge-a-different-release-1210"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-19 — A verdict is cached before it is displayed, and a startup race is not an error until it stops being normal (1.22.0)",
+          "anchor": "2026-11-19--a-verdict-is-cached-before-it-is-displayed-and-a-startup-race-is-not-an-error-until-it-stops-being-normal-1220"
+        },
+        {
+          "level": 3,
+          "text": "Issue #77 — the AI re-categorising items it had already categorised",
+          "anchor": "issue-77--the-ai-re-categorising-items-it-had-already-categorised"
+        },
+        {
+          "level": 3,
+          "text": "Issue #76 — two error lines in the log after every restart",
+          "anchor": "issue-76--two-error-lines-in-the-log-after-every-restart"
         }
       ]
     },
@@ -534,6 +549,33 @@
           "level": 3,
           "text": "Upgrade notes",
           "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.22.0.md",
+      "title": "1.22.0",
+      "lines": 18,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.22.0",
+          "anchor": "whats-new-in-v1220"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        },
+        {
+          "level": 3,
+          "text": "Not fixed here, because it isn't ours",
+          "anchor": "not-fixed-here-because-it-isnt-ours"
         }
       ]
     },
@@ -1536,6 +1578,12 @@
           },
           {
             "kind": "const",
+            "name": "SCAN_STARTUP_GRACE",
+            "parent": "",
+            "signature": "SCAN_STARTUP_GRACE = 600  # 10 minutes"
+          },
+          {
+            "kind": "const",
             "name": "TARGET_MANIFEST_URL",
             "parent": "",
             "signature": "TARGET_MANIFEST_URL = \"https://raw.githubusercontent.com/{full_name}/{ref}/hacs.json\""
@@ -2340,6 +2388,12 @@
           },
           {
             "kind": "class",
+            "name": "StoreStarting",
+            "parent": "",
+            "signature": "class StoreStarting(StoreUnavailable)"
+          },
+          {
+            "kind": "class",
             "name": "Provider",
             "parent": "",
             "signature": "class Provider"
@@ -2905,8 +2959,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "8154925d1b8b8c772ec6390a3c7bc5182f085e2b",
-    "content_hash": "dd800179e084457c",
+    "source_commit": "d2f911c0bb17dcc610138769050c1c08a077ace5",
+    "content_hash": "cda7e39535d6cf61",
     "generator": "navgen"
   }
 }
