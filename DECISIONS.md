@@ -851,3 +851,113 @@ test built its fixture by handing the manifest and the offered version as the sa
 — the exact assumption production violates the moment a new release appears before the
 next full re-fetch. A fixture that never lets the manifest and the version under test
 disagree can't catch a bug that only exists when they do.
+
+## 2026-11-19 — A verdict is cached before it is displayed, and a startup race is not an error until it stops being normal (1.22.0)
+
+Two reported issues, fixed in one release because each is a case of the component
+describing its own situation wrongly. Issue #77 threw away work it had already paid for;
+issue #76 called a normal race a fault. Neither needed new behaviour — both needed the
+code to stop conflating two things.
+
+### Issue #77 — the AI re-categorising items it had already categorised
+
+Reported, and reproduced by the owner on 1.21.0. `async_generate_new_item_categories`
+captured the `new_items` snapshot once at the start of a pass, and guarded every result
+with `current is not new_items` — an **identity** check on the dict. Dismissing an item
+ended in `await coordinator.async_refresh()`, which rebuilds that dict from scratch, so
+one dismiss made the check fail for **every** remaining result in the running pass. Those
+results were counted `skipped` and dropped. And because `_apply_new_item_ai_result` was
+the only production caller of `NewItemRegistry.set_ai`, dropping the display update also
+dropped the **cache write** — the model's answer was never saved anywhere. `remaining` was
+then computed over the stale captured list, so `_async_deferred_new_items_ai_run` saw work
+outstanding and started another pass over the same repositories. A few hundred new items
+and a handful of dismisses is hours of re-asking, restarted each time.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| When a verdict is persisted | **The moment it arrives, unconditionally**, before anything is displayed | After the display row is confirmed still current, as before |
+| How a result finds its row | **Re-resolved by `full_name` against the live snapshot** | Identity comparison against the captured snapshot |
+| A result whose row has gone | **A no-op on the display; the cache keeps it** | A `skipped` count and a discarded answer |
+| What dismissing does to the data | **Removes the rows in place and bumps `dismissed_count`** | A full `async_refresh()`, as before |
+| What `remaining` counts | **Pending rows in the live snapshot, dismissed ones excluded** | Pending rows in the captured list |
+| `counts["skipped"]` | **Kept in the response shape, now always 0** | Removed — it would break automations reading it |
+
+**Why the cache write had to move, not just the guard.** Caching the verdict for an item
+the user dismissed a second ago looks like wasted work, and it is the opposite: the
+2026-10-29 cache-version entry records that `restore_new_items` is the **only** reader of
+the AI cache for items the card no longer shows, via `get_ai(..., include_stale=True)`. A
+dismissed item's category exists nowhere else, so discarding its verdict is discarding the
+thing restore-by-category matches on. Splitting the old method in two —
+`_cache_new_item_ai_result` then `_apply_new_item_ai_result` — makes the ordering
+structural: the save cannot be conditional on anything, because the condition is evaluated
+after it. The card-category override (2026-10-29) stays inside the caching half, so the
+cached string and the displayed string are still the same string by construction.
+
+**Why dismiss stops refreshing.** A full refresh re-reads the whole store and rebuilds
+every derived list to accomplish something a list mutation does: drop N rows, raise one
+counter. Ten dismisses were ten of those. Only `items` and `dismissed_count` are stored —
+the sensor's state, `by_category` and `ai_pending` are derived live — so the in-place edit
+is complete, and `total_new` deliberately does not move because the item was reviewed, not
+un-published. **Restore still refreshes**, and must: it brings rows back, which the
+scanner has to re-derive. That asymmetry is the whole decision, and it is why the
+parametrized "review actions force an immediate refresh" test became a restore-only test
+rather than being deleted.
+
+### Issue #76 — two error lines in the log after every restart
+
+Nothing was broken; the reporter said so and the data confirmed it. Each Home Assistant
+restart races HACS's own startup, and the first scan or two losing that race is the design
+working (2026-11-09). It was written as an error, twice, from two independent causes.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| How "still starting" is signalled | **A distinct exception type**, `StoreStarting(StoreUnavailable)` | Matching on the message text |
+| What it logs inside the grace window | **`INFO` once per distinct message**, `DEBUG` on repeats | `ERROR` first time, as before; `DEBUG` always |
+| How long the grace lasts | **10 minutes from the first failure of the run** | One scan; forever |
+| Suppressing core's duplicate line | **`_async_refresh(log_failures=False)` for the setup scan only**, behind a signature check | `last_update_success = False` before the first refresh; `async_config_entry_first_refresh` |
+
+**Why a type and not a message test.** The message is published to the cards as
+`scan_error` (#114) and several tests assert its exact text, so it is interface, not a
+signal. Subclassing `StoreUnavailable` means every existing `except StoreUnavailable`
+keeps catching it and no call site had to change — the new information is available only
+to the one place that wanted it, the log-level decision.
+
+**Why the escalation is not optional.** `Provider.starting` documents the 1.20.0 finding:
+HACS 2.0.5 can report `starting` for the entire uptime of Home Assistant, and that is a
+real fault that recovers only on a restart. So `StoreStarting` means "do not shout
+immediately", never "do not shout". The grace is measured from `_scan_first_failure_at`,
+stamped on the first failure and cleared on success, and the escalation needed a **second**
+dedupe field: one field cannot represent "already said this at INFO" and "already said
+this at ERROR", so a condition logged as information at minute one could never become an
+error at minute eleven.
+
+**Why the approved plan's fix for core's duplicate was reversed during implementation.**
+The plan said to set `coordinator.last_update_success = False` before the first refresh,
+which does suppress core's line — core gates it on `if self.last_update_success:`. It also
+makes the *next* successful scan print core's `"Fetching … data recovered"` at INFO, on
+every healthy restart, about a failure nobody ever saw. Passing `log_failures=False` to the
+private `_async_refresh` suppresses only the duplicate and leaves the success path alone.
+That is a private core method, so it is called behind an `inspect.signature` check with
+`async_refresh()` as the fallback: if a future Home Assistant changes it, the integration
+loses the suppression and keeps working. `test_a_healthy_cold_start_does_not_claim_to_have_recovered`
+exists to stop the reversal being reverted.
+
+**The `skipped` count is kept and is now always zero.** It is in a service response, so
+removing the key is a breaking change for anyone reading it; the number it used to carry
+was itself the bug. The release notes say so rather than leaving a permanent 0 unexplained.
+
+**Lesson:** when a result is both saved and shown, the order is not a detail — a save that
+happens after a display check inherits every reason the display might be skipped, and the
+reader who needs the saved copy most is usually the one who can no longer see the row. Save
+first, unconditionally, and let the display be the thing that is allowed to fail.
+
+**Second lesson:** an identity comparison on a snapshot is a staleness check that answers a
+question nobody asked. "Is this the same object I started with" was being used to mean "is
+this row still real", and those diverge the instant anything else rebuilds the container —
+including an unrelated user action in another part of the same integration. Re-resolve by
+the stable key instead, and the check becomes true when it should be true.
+
+**Third lesson:** a log level is a claim about how worried to be, and it needs a notion of
+time to be honest. "This is normal during startup" and "this has been happening for twenty
+minutes" are the same condition and different faults; a dedupe keyed only on the message
+can express one of them.

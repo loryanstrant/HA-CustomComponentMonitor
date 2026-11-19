@@ -228,6 +228,62 @@ async def test_dismiss_persists_to_the_registry(setup_integration):
     assert registry.is_dismissed(ALPHA) is True
 
 
+async def test_dismiss_updates_the_card_in_place_without_a_rescan(setup_integration):
+    """Dismissing one item must not rebuild the whole list (#77).
+
+    Until v1.21.0 dismiss ended in a full refresh, which re-read every
+    repository HACS knows about and built a brand new ``new_items`` snapshot.
+    That snapshot was what the running AI pass then found itself holding a
+    stale copy of, so it threw away every answer it had already collected and
+    the model was asked for all of them again. Ten dismisses in a row were ten
+    rescans and ten restarts of the categorisation.
+
+    The row is dropped from the list the sensor publishes and the dismissed
+    count goes up, so the card still updates the instant the service returns —
+    just without the rescan behind it.
+    """
+    hass, _entry = setup_integration
+    coordinator = _coordinator(hass)
+    before = dict(coordinator.data["new_items"])
+
+    with (
+        patch.object(coordinator, "async_refresh", AsyncMock()) as refresh,
+        patch.object(coordinator, "async_request_refresh", AsyncMock()) as throttled,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_DISMISS_NEW_ITEMS,
+            {"repositories": [ALPHA]},
+            blocking=True,
+        )
+
+    refresh.assert_not_awaited()
+    throttled.assert_not_awaited()
+
+    visible = coordinator.data["new_items"]["items"]
+    assert [item["full_name"] for item in visible] == [BETA, GAMMA]
+    assert coordinator.data["new_items"]["dismissed_count"] == 1
+    # Every new repository is still counted, dismissed ones included.
+    assert coordinator.data["new_items"]["total_new"] == before["total_new"]
+    assert hass.states.get("sensor.hacs_new_items").state == "2"
+
+
+async def test_dismiss_all_empties_the_card_in_place(setup_integration):
+    """The worst case for the old rescan, and the one the card shows first."""
+    hass, _entry = setup_integration
+    coordinator = _coordinator(hass)
+
+    with patch.object(coordinator, "async_refresh", AsyncMock()) as refresh:
+        await hass.services.async_call(
+            DOMAIN, SERVICE_DISMISS_NEW_ITEMS, {"all": True}, blocking=True
+        )
+
+    refresh.assert_not_awaited()
+    assert coordinator.data["new_items"]["items"] == []
+    assert coordinator.data["new_items"]["dismissed_count"] == 3
+    assert hass.states.get("sensor.hacs_new_items").state == "0"
+
+
 async def test_dismiss_unknown_repository_is_skipped_silently(setup_integration):
     hass, _entry = setup_integration
     registry = _coordinator(hass).new_items_registry

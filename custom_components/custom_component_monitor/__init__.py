@@ -1,6 +1,7 @@
 """The Custom Component Monitor integration."""
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import date
 from pathlib import Path
@@ -264,6 +265,41 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+async def _async_first_refresh(coordinator: Any) -> None:
+    """Run the setup-time scan without core's duplicate error line (#76).
+
+    On a cold start there is no previous scan to fall back on, so a store that
+    has not finished starting makes the coordinator raise ``UpdateFailed`` —
+    correctly: the sensors should be unavailable rather than publishing zeros.
+    But ``DataUpdateCoordinator.async_refresh`` then logs an error of its own
+    for it, on top of the one this integration has already written, so a
+    perfectly normal restart race produced *two* red lines in the log and the
+    reporter of #76 was looking at an integration that was working fine.
+
+    ``log_failures=False`` is how Home Assistant's own
+    ``async_config_entry_first_refresh`` says "the caller is reporting this,
+    don't report it again", and it is the only part of that method wanted here
+    — the rest of it blocks config-entry setup on the store being ready, which
+    this integration deliberately does not do (DECISIONS.md, 2026-11-09).
+
+    Guarded rather than called outright, in the same spirit as ``store.py``:
+    the keyword is checked for before it is used, and a core that no longer
+    takes it falls back to the plain public refresh, which costs the extra log
+    line and nothing else.
+    """
+    refresh = getattr(coordinator, "_async_refresh", None)
+    try:
+        quiet = refresh is not None and (
+            "log_failures" in inspect.signature(refresh).parameters
+        )
+    except (TypeError, ValueError):  # pragma: no cover - unsignable callable
+        quiet = False
+    if quiet:
+        await refresh(log_failures=False)
+    else:
+        await coordinator.async_refresh()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Custom Component Monitor from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -277,7 +313,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store readiness is not integration readiness. Attach unavailable sensors
     # and let their coordinator retry, without blocking HA's startup tasks.
     coordinator.data = {}
-    await coordinator.async_refresh()
+    await _async_first_refresh(coordinator)
     hass.data[DOMAIN]["coordinator"] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -521,7 +557,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await coordinator.async_sync_new_items_hacs(
                     (coordinator.data or {}).get("new_items") or {}
                 )
-            await coordinator.async_refresh()
+                # Remove the rows in place rather than re-running the whole
+                # scan (#77). The rescan was never needed — a dismissal
+                # changes nothing a scan would discover, only which rows are
+                # visible — and it did real harm: it built a fresh snapshot
+                # under any AI categorisation pass that happened to be
+                # running, which is half of what made that pass re-ask the
+                # model for everything. It also charged a full read of the
+                # HACS store per dismissal, so clearing ten items one by one
+                # meant ten complete rescans.
+                dismissed = {full_name.strip().lower() for full_name in targets}
+                new_items = (coordinator.data or {}).get("new_items") or {}
+                current_items = new_items.get("items")
+                if current_items and dismissed:
+                    kept = [
+                        item
+                        for item in current_items
+                        if item["full_name"].strip().lower() not in dismissed
+                    ]
+                    removed = len(current_items) - len(kept)
+                    # In place, on the same list object: the AI pass holds a
+                    # reference to it and writes its results there.
+                    current_items[:] = kept
+                    new_items["dismissed_count"] = (
+                        new_items.get("dismissed_count", 0) + removed
+                    )
+                    # ``total_new`` counts every new repository including the
+                    # dismissed ones, so it does not move.
+            coordinator.async_update_listeners()
 
         hass.services.async_register(
             DOMAIN,

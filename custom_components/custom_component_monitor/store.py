@@ -21,6 +21,28 @@ class StoreUnavailable(Exception):
     """The selected store cannot safely provide a complete snapshot."""
 
 
+class StoreStarting(StoreUnavailable):
+    """The store is not ready *yet* — a condition that normally clears itself.
+
+    A distinct type, not a distinct message, because the caller has to make a
+    decision about it that it cannot make from a string: every Home Assistant
+    restart races the provider's own startup, so the first scan or two losing
+    that race is the system working as designed and not something to put in
+    front of a person as an error (#76).
+
+    "Normally" is doing real work in that sentence. ``Provider.starting``
+    documents that HACS 2.0.5 can report ``starting`` for the whole uptime of
+    Home Assistant, which is a genuine fault — so this type means "do not
+    shout about it immediately", never "do not shout about it". The escalation
+    lives in ``CustomComponentMonitorCoordinator._handle_scan_failure``, which
+    is the only thing that knows how long the condition has lasted.
+
+    A subclass rather than a sibling so that every ``except StoreUnavailable``
+    in the codebase keeps catching it, and the card-facing message text is
+    unchanged.
+    """
+
+
 @dataclass(frozen=True)
 class Provider:
     """The active owner, never a fallback to a retired owner's stale data."""
@@ -83,7 +105,7 @@ class Provider:
         """
         self.require_readable()
         if self.starting:
-            raise StoreUnavailable(f"{self.label} is starting; component data will retry automatically.")
+            raise StoreStarting(f"{self.label} is starting; component data will retry automatically.")
 
 
 def resolve_provider(hass: HomeAssistant) -> Provider:
@@ -176,7 +198,7 @@ async def async_repository_snapshot(hass: HomeAssistant) -> tuple[str, dict[str,
     # unavailable state (DECISIONS.md, 2026-11-09) — and so is a readable
     # empty one.
     if not snapshot and provider.starting:
-        raise StoreUnavailable(f"{provider.label} is starting; component data will retry automatically.")
+        raise StoreStarting(f"{provider.label} is starting; component data will retry automatically.")
     return provider.domain, snapshot
 
 
