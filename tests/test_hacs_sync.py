@@ -287,21 +287,34 @@ async def test_superseded_ai_batch_does_not_sync_an_obsolete_hidden_list(coordin
 
     with patch.object(coord, "_async_run_new_items_ai_wave", AsyncMock(side_effect=newer_scan)):
         counts = await coord.async_generate_new_item_categories()
-    assert counts["skipped"] == 1
+    # The hide the superseded batch knew about is never committed...
     assert repos[hidden["full_name"]].data.new is True
     assert reg.hacs_pending == {}
     hacs.data.async_write.assert_not_awaited()
+    # ...but the answer the model gave is still kept, so the item is not
+    # re-sent on the next pass (#77).
+    assert reg.get_ai(item["full_name"])["category"] == "Lighting"
+    assert counts["generated"] == 1
+    assert counts["skipped"] == 0
 
 
-@pytest.mark.parametrize('service', [SERVICE_DISMISS_NEW_ITEMS, SERVICE_RESTORE_NEW_ITEMS])
-async def test_review_actions_force_immediate_refresh_not_throttled_request(setup_integration, service):
+async def test_restore_forces_an_immediate_refresh_not_a_throttled_request(setup_integration):
+    """Restore has to rescan: it brings rows back that the scan builds.
+
+    Dismiss used to do this too and no longer does — see
+    ``test_dismiss_updates_the_card_in_place_without_a_rescan``. Restore is
+    the half that genuinely needs the whole list rebuilt, and it must not go
+    through the debouncer, or the card sits unchanged for the throttle window
+    after the user taps Restore.
+    """
     hass, _ = setup_integration
     coord = hass.data[DOMAIN]['coordinator']
-    if service == SERVICE_RESTORE_NEW_ITEMS:
-        coord.new_items_registry.dismiss('owner/alpha')
+    coord.new_items_registry.dismiss('owner/alpha')
     with patch.object(coord, 'async_refresh', AsyncMock()) as refresh, patch.object(
         coord, 'async_request_refresh', AsyncMock()
     ) as throttled:
-        await hass.services.async_call(DOMAIN, service, {'repositories': ['owner/alpha']}, blocking=True)
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RESTORE_NEW_ITEMS, {'repositories': ['owner/alpha']}, blocking=True
+        )
     refresh.assert_awaited_once_with()
     throttled.assert_not_awaited()

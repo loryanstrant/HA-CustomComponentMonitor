@@ -928,6 +928,15 @@ async def test_delayed_ai_cannot_hide_a_restored_item(new_items_coordinator):
 
 
 async def test_delayed_ai_cannot_overwrite_a_dismissal(new_items_coordinator):
+    """A dismissal wins the display — and the answer is still kept (#77).
+
+    Those are two separate promises and until v1.22.0 the second one was
+    broken: the verdict was dropped on the floor along with the display
+    update, so the item came back uncategorised and the model was asked about
+    it all over again. The dismissal must not be overwritten (no hide, no
+    category on the visible row) *and* the answer must be in the cache, which
+    is where ``restore_new_items`` reads it back from.
+    """
     coord = new_items_coordinator
     item = new_item("owner/alpha")
     coord.data = {"new_items": {"items": [item], "hidden": []}}
@@ -939,9 +948,71 @@ async def test_delayed_ai_cannot_overwrite_a_dismissal(new_items_coordinator):
 
     with patch.object(coord, "_async_ai_call", AsyncMock(side_effect=answer)):
         counts = await coord.async_generate_new_item_categories()
-    assert counts["skipped"] == 1
+
+    # The dismissal stands: not hidden, and the row is left as it was.
     assert coord.new_items_registry.is_dismissed("owner/alpha")
     assert coord.new_items_registry.hidden_record("owner/alpha") is None
+    assert item["ai_pending"] is True
+
+    # And the answer survived, so nothing will be re-asked.
+    assert coord.new_items_registry.get_ai("owner/alpha")["category"] == "Lighting"
+    assert counts["generated"] == 1
+    assert counts["skipped"] == 0
+    assert counts["remaining"] == 0
+
+
+async def test_a_dismiss_mid_pass_does_not_make_the_ai_start_over(new_items_coordinator):
+    """The whole of #77, in the shape the reporter hit it.
+
+    Six repositories are waiting on the model. Part-way through, the user taps
+    Dismiss on two of them — which is all it took in v1.21.0 to throw away
+    every answer collected so far, cache included, leaving the catch-up chain
+    to ask the model about the lot a second time. On a store with hundreds of
+    new items that is hours of re-asking, and dismissing a few more while it
+    runs keeps restarting it.
+
+    Three things are asserted, because all three were broken: the model is
+    asked once per repository and no more, every answer is in the cache
+    (including the two dismissed ones, whose cached verdict is what
+    ``restore_new_items`` matches a category against), and the pass reports no
+    backlog so the chain stops instead of going round again.
+    """
+    coord = new_items_coordinator
+    items = [new_item(f"owner/repo-{i}") for i in range(6)]
+    new_items = {"items": items, "hidden": [], "dismissed_count": 0, "total_new": 6}
+    coord.data = {"new_items": new_items}
+    asked: list[str] = []
+
+    async def answer(item, _ai_entity):
+        asked.append(item["full_name"])
+        if len(asked) == 3:
+            # Exactly what the dismiss service does now: drop the rows from
+            # the live list in place, no rescan.
+            async with coord.new_items_review_lock:
+                for name in ("owner/repo-0", "owner/repo-1"):
+                    coord.new_items_registry.dismiss(name)
+                kept = [row for row in items if row["full_name"] not in
+                        ("owner/repo-0", "owner/repo-1")]
+                removed = len(items) - len(kept)
+                items[:] = kept
+                new_items["dismissed_count"] += removed
+        return {"category": "Lighting", "country_scope": "global"}
+
+    with patch.object(coord, "_async_categorise_new_item", AsyncMock(side_effect=answer)):
+        counts = await coord.async_generate_new_item_categories()
+
+    assert sorted(asked) == [f"owner/repo-{i}" for i in range(6)]
+    assert all(
+        coord.new_items_registry.get_ai(f"owner/repo-{i}")["category"] == "Lighting"
+        for i in range(6)
+    )
+    assert counts["generated"] == 6
+    assert counts["remaining"] == 0
+    # The dismissal held: the two rows are gone and did not come back.
+    assert [row["full_name"] for row in coord.data["new_items"]["items"]] == [
+        f"owner/repo-{i}" for i in range(2, 6)
+    ]
+    assert coord.data["new_items"]["dismissed_count"] == 2
 
 
 async def test_old_dismissal_without_seen_record_is_counted_after_hacs_clear(hass, registry):

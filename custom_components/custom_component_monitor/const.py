@@ -170,6 +170,19 @@ SCAN_RETRY_MAX_INTERVAL = DEFAULT_SCAN_INTERVAL
 # from yesterday" is more useful than six blank cards; a week of it would be
 # misinformation.
 SCAN_STALE_GRACE = 86400  # 24 hours
+# How long a "the store is still starting" failure counts as the ordinary
+# restart race rather than a fault (#76). Every Home Assistant restart has this
+# integration asking HACS for its data while HACS is still building its index,
+# and 1.21.0 wrote that down as an ERROR — two red lines in the log on every
+# restart, for a condition that clears itself within a minute and breaks
+# nothing. Inside this window a StoreStarting failure is logged at INFO.
+#
+# Ten minutes, not one: HACS on a Raspberry Pi with a large store can take
+# several minutes of a cold boot to finish, and the retry backoff means the
+# attempts inside the window are few. Past it, the condition stops being a race
+# and becomes the permanently-"starting" HACS described in store.Provider —
+# which is a real fault, so it escalates to ERROR exactly once.
+SCAN_STARTUP_GRACE = 600  # 10 minutes
 
 # --- Reading the OFFERED release's requirement (#115) ----------------------
 # HACS keeps exactly one hacs.json snapshot per repository, in

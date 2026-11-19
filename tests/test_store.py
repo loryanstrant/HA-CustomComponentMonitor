@@ -23,6 +23,7 @@ from custom_components.custom_component_monitor.const import (
     SCAN_RETRY_INTERVAL,
     SCAN_RETRY_MAX_INTERVAL,
     SCAN_STALE_GRACE,
+    SCAN_STARTUP_GRACE,
 )
 from custom_components.custom_component_monitor.hacs_sync import async_sync_hacs_new
 from custom_components.custom_component_monitor.sensor import (
@@ -30,6 +31,7 @@ from custom_components.custom_component_monitor.sensor import (
     ComponentScanner,
 )
 from custom_components.custom_component_monitor.store import (
+    StoreStarting,
     StoreUnavailable,
     async_repository_snapshot,
     resolve_provider,
@@ -377,6 +379,137 @@ async def test_repeated_identical_scan_failures_are_logged_once(coordinator, cap
         await coord.async_refresh()
     assert not [r for r in caplog.records
                 if r.levelname == 'ERROR' and 'Error scanning' in r.message]
+
+
+async def test_a_startup_race_is_information_not_an_error(coordinator, caplog):
+    """#76: every restart races HACS, and 1.21.0 called that an error.
+
+    Nothing is broken when this happens — the next scan a few seconds later
+    succeeds — so a healthy house was getting a red line in its log on every
+    single restart. It is still *said*, at information level, because a user
+    reading the log should be able to see why the cards were briefly empty.
+
+    Home Assistant's own duplicate of this line is the other half of #76 and
+    is asserted separately, by
+    ``test_a_cold_start_logs_the_startup_race_once_not_twice`` — it is only
+    ever written on the setup-time scan, which is the one this component asks
+    core to keep quiet about.
+    """
+    coord = coordinator
+    caplog.set_level('DEBUG')
+    with patch(SNAPSHOT, side_effect=StoreStarting('HACS is starting; component data will retry automatically.')):
+        await coord.async_refresh()
+    ours = [r for r in caplog.records if r.levelname == 'ERROR' and 'Error scanning' in r.message]
+    notices = [r for r in caplog.records
+               if r.levelname == 'INFO' and 'not ready yet' in r.message]
+    assert ours == []
+    assert len(notices) == 1
+    assert 'HACS is starting' in notices[0].message
+
+
+async def test_a_store_that_never_finishes_starting_escalates_to_an_error(coordinator, caplog):
+    """The silence has a time limit (#76).
+
+    HACS 2.0.5 can report "starting" for the whole uptime of Home Assistant
+    while its data sits complete on disk (see ``store.Provider.starting``).
+    That is a real fault and the user has to be told, so the same condition
+    becomes an error once it has outlasted :data:`SCAN_STARTUP_GRACE` — and
+    the escalation must survive the dedupe that already reported it at
+    information level.
+    """
+    coord = coordinator
+    exc = StoreStarting('HACS is starting; component data will retry automatically.')
+    with patch(SNAPSHOT, side_effect=exc):
+        await coord.async_refresh()
+        caplog.clear()
+        # Still the same run of failures, now older than the grace window.
+        coord._scan_first_failure_at -= SCAN_STARTUP_GRACE + 1
+        await coord.async_refresh()
+        escalated = [r for r in caplog.records
+                     if r.levelname == 'ERROR' and 'Error scanning' in r.message]
+        assert len(escalated) == 1
+        # ...and once only, not every 30 seconds thereafter.
+        caplog.clear()
+        await coord.async_refresh()
+        assert not [r for r in caplog.records if r.levelname == 'ERROR']
+
+
+async def test_a_failure_that_is_not_a_startup_race_is_still_an_error_at_once(coordinator, caplog):
+    """The grace window is for one named condition, not for every failure.
+
+    A disabled or missing HACS does not fix itself, so it keeps 1.21.0's
+    behaviour exactly: an error, on the first sighting.
+    """
+    coord = coordinator
+    with patch(SNAPSHOT, side_effect=StoreUnavailable('HACS is disabled; check its integration and retry Scan now.')):
+        await coord.async_refresh()
+    assert [r for r in caplog.records
+            if r.levelname == 'ERROR' and 'Error scanning' in r.message]
+
+
+async def test_a_recovered_scan_rearms_the_startup_grace(coordinator, caplog):
+    """The window is per run of failures, not per Home Assistant uptime.
+
+    A reload of HACS hours later races startup again in exactly the same way,
+    and that restart deserves the same quiet treatment as the first one.
+    """
+    coord = coordinator
+    exc = StoreStarting('HACS is starting; component data will retry automatically.')
+    with patch(SNAPSHOT, side_effect=exc) as snapshot:
+        await coord.async_refresh()
+        snapshot.side_effect = None
+        snapshot.return_value = ('hacs', deepcopy(LEGACY_ROW))
+        await coord.async_refresh()
+        assert coord._scan_first_failure_at is None
+        snapshot.side_effect = exc
+        caplog.clear()
+        await coord.async_refresh()
+    assert not [r for r in caplog.records if r.levelname == 'ERROR']
+
+
+async def test_a_cold_start_logs_the_startup_race_once_not_twice(hass, caplog):
+    """The second red line in #76 came from Home Assistant, not from here.
+
+    On the first scan after a restart there is no earlier data to fall back
+    on, so the coordinator fails honestly — and core logs its own "Error
+    fetching ... data" on top of the line this component had already written.
+    Two reports of one normal startup race. The setup-time scan now asks core
+    not to add its copy.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, title='Monitor', data={})
+    entry.add_to_hass(hass)
+    caplog.set_level('DEBUG')
+    with patch('custom_components.custom_component_monitor.sensor.async_repository_snapshot',
+               side_effect=StoreStarting('HACS is starting; component data will retry automatically.')):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert hass.states.get('sensor.hacs_new_items').state == 'unavailable'
+        assert not [r for r in caplog.records if r.levelname == 'ERROR']
+        assert not [r for r in caplog.records if 'Error fetching' in r.message]
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_a_healthy_cold_start_does_not_claim_to_have_recovered(hass, caplog):
+    """Suppressing core's line must not cost a confusing one of its own.
+
+    Core logs "Fetching ... data recovered" at information level on the first
+    success after a failure, which is why the fix is to ask it not to log the
+    failure rather than to pre-declare the coordinator unsuccessful: that
+    would have put a recovery notice in every healthy restart's log while
+    fixing the noise in #76.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, title='Monitor', data={})
+    entry.add_to_hass(hass)
+    caplog.set_level('DEBUG')
+    with patch('custom_components.custom_component_monitor.sensor.async_repository_snapshot',
+               return_value=('hacs', deepcopy(LEGACY_ROW))):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert not [r for r in caplog.records if 'recovered' in r.message]
+        assert not [r for r in caplog.records if r.levelname == 'ERROR']
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
 
 
 async def test_initial_unavailable_setup_attaches_sensors_and_recovers_without_reload(hass):

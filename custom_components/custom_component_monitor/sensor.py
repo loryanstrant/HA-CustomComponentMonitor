@@ -110,6 +110,7 @@ from .const import (
     SCAN_RETRY_INTERVAL,
     SCAN_RETRY_MAX_INTERVAL,
     SCAN_STALE_GRACE,
+    SCAN_STARTUP_GRACE,
     SENSOR_ALL_COMPONENTS,
     SENSOR_HACS_UPDATES,
     SENSOR_NEW_ITEMS,
@@ -136,6 +137,7 @@ from .install_dates import InstallDateRegistry
 from .new_items import NewItemRegistry, display_name_for
 from .store import (
     UPDATE_PROVIDERS,
+    StoreStarting,
     StoreUnavailable,
     async_repository_snapshot,
     store_status,
@@ -2050,7 +2052,17 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._scan_failures = 0
         self._scan_error: str | None = None
         self._scan_error_logged: str | None = None
+        # The same dedupe for the quieter startup notice, kept apart from
+        # ``_scan_error_logged`` so that a condition first mentioned at info
+        # can still be escalated to an error later (#76).
+        self._scan_notice_logged: str | None = None
         self._last_successful_scan: str | None = None
+        # When the current run of consecutive failures began (#76). Monotonic,
+        # because this is only ever used to measure a duration and the wall
+        # clock can jump during startup. Cleared on any success, so "how long
+        # has the store been starting" is answered about *this* outage and not
+        # about one three days ago.
+        self._scan_first_failure_at: float | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -2236,6 +2248,8 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._scan_failures = 0
         self._scan_error = None
         self._scan_error_logged = None
+        self._scan_notice_logged = None
+        self._scan_first_failure_at = None
         self._last_successful_scan = scanned_at
         self.update_interval = SCAN_INTERVAL
         # Only wake the worker for updates it would actually attempt. Counting
@@ -2291,7 +2305,34 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 SCAN_RETRY_MAX_INTERVAL,
             )
         )
-        if message != self._scan_error_logged:
+        # How loudly to say it (#76). "The store is still starting" is what
+        # every Home Assistant restart looks like for the first few seconds,
+        # and 1.21.0 called it an error — so a healthy house got two red lines
+        # in its log on every restart for something that fixes itself and
+        # breaks nothing. Inside SCAN_STARTUP_GRACE that condition is reported
+        # as information instead.
+        #
+        # It is reported, not swallowed: a HACS that never finishes starting
+        # keeps its on-disk data complete while reporting "startup" for the
+        # whole uptime (see store.Provider.starting), and that is a genuine
+        # fault the user needs to see. So the grace window expiring escalates
+        # the same condition to an error — hence two separate "last reported"
+        # fields. One field could not tell "already mentioned at info" from
+        # "already reported as an error", and the escalation would be
+        # swallowed by its own dedupe.
+        if self._scan_first_failure_at is None:
+            self._scan_first_failure_at = time.monotonic()
+        within_startup_grace = (
+            isinstance(exc, StoreStarting)
+            and time.monotonic() - self._scan_first_failure_at < SCAN_STARTUP_GRACE
+        )
+        if within_startup_grace:
+            if message != self._scan_notice_logged:
+                self._scan_notice_logged = message
+                _LOGGER.info("Component store is not ready yet: %s", message)
+            else:
+                _LOGGER.debug("Component store is not ready yet: %s", message)
+        elif message != self._scan_error_logged:
             self._scan_error_logged = message
             _LOGGER.error("Error scanning custom components: %s", message)
         else:
@@ -2307,8 +2348,9 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Shallow on purpose: the sub-dicts (``updates``, ``new_items``, …)
         # must stay the *same objects*, because the AI workers hold references
-        # to them and check identity to decide whether a newer scan has
-        # replaced the batch they were working on.
+        # to them and write their results straight into those lists. Copying
+        # them here would make a stale scan silently discard whatever the AI
+        # finished while it was running.
         stale = dict(last_good)
         stale[ATTR_DATA_STALE] = True
         stale[ATTR_SCAN_ERROR] = shown
@@ -3420,17 +3462,57 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 task.cancel()
             raise
 
+    def _cache_new_item_ai_result(
+        self,
+        item: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        ai_entity: str | None,
+    ) -> str:
+        """Persist one AI verdict and return the category it settled on.
+
+        Split out of :meth:`_apply_new_item_ai_result` so that the *saving* of
+        an answer cannot be made conditional on anything (#77). Until 1.21.0
+        the cache write lived inside that method, which ran only if the
+        snapshot the pass started from was still the live one — so a dismissal
+        or a rescan landing mid-pass threw away every answer the model had
+        already given AND left nothing cached, and the catch-up chain then
+        asked the model for all of it again. For a store with a few hundred
+        new items that is hours of re-asking for one tap on Dismiss.
+
+        An answer about a repository is true regardless of what the user did
+        to their review queue while it was in flight, so there is no case in
+        which keeping it is wrong — including when the item has just been
+        dismissed, whose cached verdict ``restore_new_items`` reads back to
+        work out which category to restore it into.
+
+        :func:`card_category_override` is applied here, before the write,
+        because this method is the only place in production that calls
+        ``set_ai``. Overriding once at the choke point means the cached
+        verdict, the in-memory item the sensor publishes, and the category
+        ``restore_new_items`` later reads back are all the same string, with
+        no second copy of the rule to fall out of step.
+        """
+        category = card_category_override(item.get("kind"), result["category"])
+        self.new_items_registry.set_ai(
+            item["full_name"],
+            category=category,
+            country_scope=result["country_scope"],
+            model=ai_entity,
+        )
+        return category
+
     def _apply_new_item_ai_result(
         self,
         item: dict[str, Any],
         result: dict[str, Any],
         *,
+        category: str,
         items: list[dict[str, Any]],
         new_items: dict[str, Any],
         settings: dict[str, Any],
-        ai_entity: str | None,
     ) -> None:
-        """Record one categorisation and apply the AI's second hide chance.
+        """Show one categorisation and apply the AI's second hide chance.
 
         When the AI's ``country_scope`` turns out to be foreign
         (:func:`ai_scope_hides`) and the item has no ``never_hide`` exemption,
@@ -3445,21 +3527,14 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         cycle, which is the only place visibility is ever decided — hence both
         sides going through the one :func:`ai_scope_hides` predicate.
 
-        :func:`card_category_override` is applied here, before the cache
-        write, because this method is the only place in production that calls
-        ``set_ai``. Overriding once at the choke point means the cached
-        verdict, the in-memory item the sensor publishes, and the category
-        ``restore_new_items`` later reads back for a dismissed item are all
-        the same string, with no second copy of the rule to fall out of step.
+        *item*, *items* and *new_items* must all belong to the snapshot that is
+        live **now**, never to the one the pass started from — the caller
+        re-resolves the row by name before calling this (#77). *category* is
+        whatever :meth:`_cache_new_item_ai_result` has already written to the
+        registry, passed in rather than recomputed so the cached verdict and
+        the row on the card can never disagree.
         """
         full_name = item["full_name"]
-        category = card_category_override(item.get("kind"), result["category"])
-        self.new_items_registry.set_ai(
-            full_name,
-            category=category,
-            country_scope=result["country_scope"],
-            model=ai_entity,
-        )
         item["category"] = category
         item["ai_pending"] = False
 
@@ -3496,6 +3571,31 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
             )
 
+    def _new_items_ai_backlog(self) -> int:
+        """How many visible new items are still waiting on the AI, right now.
+
+        Counted against the snapshot that is live at the moment of asking,
+        never against the list a pass started from (#77). The catch-up chain
+        decides whether to run another pass from this number, so counting a
+        stale list made it start a pass for work that had already been done —
+        and the items that pass re-sent were exactly the ones whose answers
+        had just been thrown away.
+
+        A dismissed row does not count even if it is still in the list. The
+        dismiss service takes it out in place, but a dismissal recorded any
+        other way (a HACS-side clear, a restore undone) leaves it there until
+        the next full scan rebuilds the list — and asking the model about an
+        item the user has already waved away is the same wasted call this is
+        here to stop.
+        """
+        items = ((self.data or {}).get("new_items") or {}).get("items") or []
+        return sum(
+            1
+            for item in items
+            if item.get("ai_pending")
+            and not self.new_items_registry.is_dismissed(item["full_name"])
+        )
+
     async def async_generate_new_item_categories(
         self, *, limit: int | None = None, max_seconds: float | None = None
     ) -> dict[str, int]:
@@ -3518,6 +3618,13 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         ``remaining`` is the pending count when the pass ends, so a non-zero
         value is the signal for the catch-up chain to run another pass.
+
+        ``skipped`` is always 0 here since 1.22.0, and the key is kept only
+        because it is part of the service's response shape. It used to count
+        the answers this pass threw away when the snapshot moved under it —
+        which is the bug #77 reports, so there is nothing left for it to
+        count: an answer is now cached whatever else has happened, and
+        ``generated`` counts answers *kept*, not answers displayed.
         """
         counts = {"generated": 0, "failed": 0, "skipped": 0, "remaining": 0}
         enabled, ai_entity = self._ai_settings()
@@ -3546,9 +3653,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Still report the true backlog: a caller that passed
                 # ``limit=0`` has selected nothing to do, which is not the
                 # same as there being nothing left to sort.
-                counts["remaining"] = sum(
-                    1 for item in items if item.get("ai_pending")
-                )
+                counts["remaining"] = self._new_items_ai_backlog()
                 return counts
 
             # Saved and restored rather than forced False, so a pass nested
@@ -3579,24 +3684,47 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 counts["failed"] += 1
                                 continue
                             ok += 1
-                            # A scan or dismissal can replace/remove this row
-                            # while its AI response is in flight. Do not apply
-                            # stale work to the new review decision.
-                            current = (self.data or {}).get("new_items")
-                            if (
-                                current is not new_items
-                                or self.new_items_registry.is_dismissed(item["full_name"])
-                            ):
-                                counts["skipped"] += 1
-                                continue
+                            # Save the answer first, always (#77). A scan or a
+                            # dismissal can replace this batch's snapshot while
+                            # its AI responses are in flight; 1.21.0 responded
+                            # by discarding every answer that arrived after
+                            # that, cache and all, so the catch-up chain
+                            # re-asked the model for the whole remaining list.
+                            # Dismissing three items in a row could restart the
+                            # categorisation of hundreds.
+                            category = self._cache_new_item_ai_result(
+                                item, result, ai_entity=ai_entity
+                            )
                             counts["generated"] += 1
+                            # Showing it is the part that depends on what the
+                            # live snapshot says now, so resolve the row by
+                            # name against that snapshot instead of trusting
+                            # the object this pass sent. No row means the
+                            # repository has been dismissed, hidden or has left
+                            # the HACS store since — nothing to show, and the
+                            # verdict above is already safe on disk.
+                            current = (self.data or {}).get("new_items") or {}
+                            current_items = current.get("items") or []
+                            row = next(
+                                (
+                                    candidate
+                                    for candidate in current_items
+                                    if candidate.get("full_name")
+                                    == item["full_name"]
+                                ),
+                                None,
+                            )
+                            if row is None or self.new_items_registry.is_dismissed(
+                                item["full_name"]
+                            ):
+                                continue
                             self._apply_new_item_ai_result(
-                                item,
+                                row,
                                 result,
-                                items=items,
-                                new_items=new_items,
+                                category=category,
+                                items=current_items,
+                                new_items=current,
                                 settings=self._new_items_settings(),
-                                ai_entity=ai_entity,
                             )
                         # A newer scan may have replaced this batch's snapshot.
                         # Reconcile current decisions, never its obsolete hides.
@@ -3625,9 +3753,7 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._new_items_ai_duty = work / (
                         work + NEW_ITEMS_AI_CATCHUP_SECONDS
                     )
-                counts["remaining"] = sum(
-                    1 for item in items if item.get("ai_pending")
-                )
+                counts["remaining"] = self._new_items_ai_backlog()
                 self.new_items_ai_in_progress = was_in_progress
                 self.new_items_ai_last_run = dt_util.utcnow().isoformat()
                 async with self.new_items_review_lock:

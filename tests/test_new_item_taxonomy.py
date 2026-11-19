@@ -199,6 +199,28 @@ def _card_item() -> dict:
     }
 
 
+def _categorise(coord, item, result, *, items, new_items) -> str:
+    """Both halves of one verdict, in the order production runs them (v1.22.0).
+
+    The cache write and the display update are two methods since v1.22.0, so
+    that saving an answer can never be made conditional on the snapshot still
+    being current (#77). Driving them from one helper here is deliberate: the
+    override is only correct if the string the cache gets and the string the
+    card gets are the same one, and a test that called a single method could
+    no longer tell.
+    """
+    category = coord._cache_new_item_ai_result(item, result, ai_entity="ai_task.test")
+    coord._apply_new_item_ai_result(
+        item,
+        result,
+        category=category,
+        items=items,
+        new_items=new_items,
+        settings=SETTINGS,
+    )
+    return category
+
+
 def test_the_override_reaches_both_the_cache_and_the_published_item(
     new_items_coordinator,
 ) -> None:
@@ -214,13 +236,12 @@ def test_the_override_reaches_both_the_cache_and_the_published_item(
     items = [item]
     new_items: dict = {"items": items, "hidden": []}
 
-    new_items_coordinator._apply_new_item_ai_result(
+    _categorise(
+        new_items_coordinator,
         item,
         {"category": NEW_ITEM_CATEGORY_FALLBACK, "country_scope": "global"},
         items=items,
         new_items=new_items,
-        settings=SETTINGS,
-        ai_entity="ai_task.test",
     )
 
     assert item["category"] == DASHBOARD
@@ -241,13 +262,12 @@ def test_an_integrations_verdict_is_passed_through_untouched(
     }
     items = [item]
 
-    new_items_coordinator._apply_new_item_ai_result(
+    _categorise(
+        new_items_coordinator,
         item,
         {"category": DIAGNOSTICS, "country_scope": "global"},
         items=items,
         new_items={"items": items, "hidden": []},
-        settings=SETTINGS,
-        ai_entity="ai_task.test",
     )
 
     assert item["category"] == DIAGNOSTICS
@@ -268,13 +288,12 @@ def test_a_card_hidden_by_its_ai_country_scope_still_carries_the_override(
     items = [item]
     new_items: dict = {"items": items, "hidden": []}
 
-    new_items_coordinator._apply_new_item_ai_result(
+    _categorise(
+        new_items_coordinator,
         item,
         {"category": NEW_ITEM_CATEGORY_FALLBACK, "country_scope": "SE"},
         items=items,
         new_items=new_items,
-        settings=SETTINGS,
-        ai_entity="ai_task.test",
     )
 
     assert items == []  # moved out of the visible set
