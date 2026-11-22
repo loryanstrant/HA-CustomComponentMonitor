@@ -4,7 +4,7 @@
  * Skip, Update, and Update & Action buttons.
  */
 
-const CARD_VERSION = "1.22.0";
+const CARD_VERSION = "1.23.0";
 const UAT_DOMAIN = "custom_component_monitor";
 // #91: AI summaries and the ai_enabled flag live here, not on the update.*
 // entities. Both the card and its editor read it.
@@ -268,9 +268,6 @@ class UpdateActionTrackerCard extends HTMLElement {
     this._aiBusy = false; // #91: a generate_summaries call is in flight
     // #111: updates that need a newer Home Assistant are hidden by default.
     this._showIncompatible = false;
-    // #111: per-row "I understand the requirement is unknown" ticks. Deliberately
-    // cleared whenever a row closes, so the risk is taken once per install.
-    this._ackUnknown = {};
     this._eligibleEntities = []; // the subset "Update all" may actually install
   }
 
@@ -567,13 +564,18 @@ class UpdateActionTrackerCard extends HTMLElement {
     return cfg.version ? String(cfg.version) : "";
   }
 
-  // A blocked row renders no install button and an unknown one renders a
-  // disabled pair, but guard the handlers too: a click on a stale DOM must not
-  // slip past the rule the card exists to enforce.
+  // A blocked row renders no install button at all, but guard the handler too:
+  // a click on a stale DOM must not slip past the rule the card exists to
+  // enforce.
+  //
+  // 1.23.0: an unknown requirement is a WARNING, not a refusal. It used to need a
+  // tick first, which cost a click on most rows — most components declare no
+  // minimum at all — while the server never asked for one: update_block_reason
+  // and _async_block_reason both refuse only a requirement positively
+  // established as unmet. The explanation panel stays; the extra click is gone.
   _installAllowed(entityId) {
     const req = this._compatOf(entityId, this._buildCompatMap());
     if (req.state === "blocked") return false;
-    if (req.state === "unknown" && !this._ackUnknown[entityId]) return false;
     return true;
   }
 
@@ -650,9 +652,9 @@ class UpdateActionTrackerCard extends HTMLElement {
 
   async _handleUpdateAll() {
     // #111: act on the ELIGIBLE set captured during render — the visible rows
-    // whose Home Assistant requirement is met. Blocked and unknown are both
-    // left out, and the dialog quotes that same number so the confirmation
-    // cannot promise more than the service will do.
+    // the card is willing to install. From 1.23.0 that is everything not blocked, so
+    // only blocked rows are left out. The dialog quotes that same number, so
+    // the confirmation cannot promise more than the service will do.
     const targets = (this._eligibleEntities || []).slice();
     if (!targets.length) return;
     const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
@@ -660,9 +662,10 @@ class UpdateActionTrackerCard extends HTMLElement {
     const noun = "update" + (targets.length > 1 ? "s" : "");
     let msg;
     if (partial) {
-      // Some listed rows are out of scope (blocked, or requirement unknown).
-      // Said whether or not a type/category filter is also on, because "the N
-      // selected" would otherwise quietly mean fewer than the N on screen.
+      // Some listed rows are out of scope — blocked ones, revealed by "Show
+      // incompatible". Said whether or not a type/category filter is also on,
+      // because "the N selected" would otherwise quietly mean fewer than the N
+      // on screen.
       msg = "Install " + targets.length + " of the " + this._shownEntities.length +
         " listed HACS updates now? The rest are left out.";
     } else if (filtered) {
@@ -738,9 +741,6 @@ class UpdateActionTrackerCard extends HTMLElement {
   }
 
   _toggleExpand(entityId) {
-    // #111: an "I understand the requirement is unknown" tick lasts as long as
-    // the row is open and no longer, so it can never carry over to the next one.
-    this._ackUnknown = {};
     if (this._expandedEntity === entityId) {
       this._expandedEntity = null;
     } else {
@@ -842,16 +842,23 @@ class UpdateActionTrackerCard extends HTMLElement {
 
     // Remember the currently-visible (filtered) set so "Update selected" acts on it.
     this._shownEntities = shown;
-    // #111: and the subset the bulk service may actually install. Requirement
-    // met only — revealing incompatible rows never grows this set.
+    // #111: and the subset the bulk service may actually install. From 1.23.0 that is
+    // every row that is not blocked — an unknown requirement is a warning on
+    // the row, not a reason to leave it out of "Update all". Revealing
+    // incompatible rows never grows this set.
     const eligible = shown.filter(
-      (eid) => this._compatOf(eid, compatMap).state === "met"
+      (eid) => this._compatOf(eid, compatMap).state !== "blocked"
     );
     this._eligibleEntities = eligible;
     const shownBlocked = shown.filter(
       (eid) => this._compatOf(eid, compatMap).state === "blocked"
     ).length;
-    const shownUnknown = shown.length - eligible.length - shownBlocked;
+    // Counted directly rather than as "shown minus eligible minus blocked",
+    // which would now always be zero.
+    const shownUnknown = shown.filter((eid) => {
+      const state = this._compatOf(eid, compatMap).state;
+      return state !== "blocked" && state !== "met";
+    }).length;
     const filtered = this._typeFilter !== "all" || this._categoryFilter !== "all";
 
     let contentHtml;
@@ -965,8 +972,9 @@ class UpdateActionTrackerCard extends HTMLElement {
         '</span></div>';
     }
 
-    /* #111: the button says how many it will install; the line beside it says
-       why the rest are out. Both quote the eligible set, never the visible one. */
+    /* #111: the button says how many it will install; the line beside it marks
+       the rows worth a second look. Blocked rows are out of the bulk set; from 1.23.0
+       unknown-requirement rows are IN it, and still flagged. */
     const bulkLabel = eligible.length === shown.length
       ? (filtered
           ? 'Update selected (' + shown.length + ')'
@@ -979,7 +987,7 @@ class UpdateActionTrackerCard extends HTMLElement {
     if (shownUnknown > 0) {
       outParts.push(
         '<span class="glyph unknown"></span> ' + shownUnknown +
-        (shownBlocked > 0 ? " requirement unknown" : " skipped — requirement unknown")
+        " with an unknown requirement"
       );
     }
     const bulkHintHtml = outParts.length
@@ -1173,18 +1181,6 @@ class UpdateActionTrackerCard extends HTMLElement {
       if (releaseUrl) {
         html += '<div class="release-link"><a href="' + uatEscapeHtml(releaseUrl) + '" target="_blank" rel="noopener noreferrer">View on GitHub</a></div>';
       }
-      /* #111: an unknown requirement is installable, but only deliberately —
-         one tick, which _toggleExpand forgets when the row closes. */
-      const acked = !!this._ackUnknown[entityId];
-      if (isUnknown) {
-        html +=
-          '<div class="compat-ack" data-ack="' + entityId + '" role="checkbox" tabindex="0" ' +
-          'aria-checked="' + (acked ? "true" : "false") + '">' +
-          '<span class="box' + (acked ? " checked" : "") + '">' + (acked ? "&#10003;" : "") + '</span>' +
-          '<span>I understand the requirement is unknown — install ' + latestVer +
-          ' anyway</span></div>';
-      }
-
       if (isBlocked) {
         /* No Update button at all, not a disabled one: there is nothing to
            click at and wonder about. Skip stays — dismissing it is still
@@ -1196,12 +1192,15 @@ class UpdateActionTrackerCard extends HTMLElement {
           reqVer + ' or newer.</span>' +
           '</div>';
       } else {
-        const installDisabled = (disableButtons || (isUnknown && !acked)) ? " disabled" : "";
+        /* 1.23.0: an unknown requirement no longer disables anything. The panel
+           above says what could not be established; the install is one click,
+           the same as any other row. Only an install already in flight
+           disables these. */
         html +=
           '<div class="actions">' +
           '<button class="btn btn-skip" data-action="skip" data-entity="' + entityId + '"' + btnDisabled + '>Skip</button>' +
-          '<button class="btn btn-update" data-action="update" data-entity="' + entityId + '"' + installDisabled + '>Update</button>' +
-          '<button class="btn btn-action" data-action="update_action" data-entity="' + entityId + '"' + installDisabled + '>Update & Action</button>' +
+          '<button class="btn btn-update" data-action="update" data-entity="' + entityId + '"' + btnDisabled + '>Update</button>' +
+          '<button class="btn btn-action" data-action="update_action" data-entity="' + entityId + '"' + btnDisabled + '>Update & Action</button>' +
           '</div>';
       }
     }
@@ -1325,19 +1324,6 @@ class UpdateActionTrackerCard extends HTMLElement {
         self._doRender();
       });
     }
-    /* #111: the unknown-requirement acknowledgement. */
-    this.shadowRoot.querySelectorAll("[data-ack]").forEach(function(row) {
-      const toggle = function(e) {
-        e.stopPropagation();
-        const eid = row.getAttribute("data-ack");
-        self._ackUnknown[eid] = !self._ackUnknown[eid];
-        self._doRender();
-      };
-      row.addEventListener("click", toggle);
-      row.addEventListener("keydown", function(e) {
-        if (e.key === " " || e.key === "Enter") toggle(e);
-      });
-    });
     const sortChip = this.shadowRoot.querySelector(".chip[data-catsort]");
     if (sortChip) {
       sortChip.addEventListener("click", function(e) {
@@ -1513,11 +1499,6 @@ class UpdateActionTrackerCard extends HTMLElement {
       ".compat-warn strong { font-weight:600; }",
       ".compat-warn .warn-body { min-width:0; }",
       ".compat-warn .warn-why { display:block; margin-top:4px; color:var(--uat-secondary); font-size:0.94em; }",
-
-      /* The acknowledgement for an unknown requirement. */
-      ".compat-ack { display:flex; align-items:flex-start; gap:8px; margin:0 0 10px 52px; font-size:0.84em; line-height:1.4; color:var(--uat-primary); cursor:pointer; }",
-      ".compat-ack .box { display:inline-block; width:16px; height:16px; border:2px solid var(--uat-secondary); border-radius:3px; flex-shrink:0; margin-top:1px; }",
-      ".compat-ack .box.checked { border-color:var(--uat-accent); background:var(--uat-accent); color:#fff; text-align:center; line-height:14px; font-size:12px; font-weight:700; }",
 
       /* A blocked row's Update buttons are replaced by a plain explanation,
          so there is no disabled button to click at and wonder about. */

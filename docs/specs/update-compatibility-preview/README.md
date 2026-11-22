@@ -1,5 +1,11 @@
 # Design preview — Home Assistant compatibility filter
 
+> **Partly superseded in v1.23.0.** The three states, the drawn marks, the
+> no-button-at-all treatment of a blocked row and the bulk button naming its own
+> scope all still hold. What changed: an **unknown** requirement no longer needs a
+> per-row acknowledgement and is no longer excluded from the bulk set — only
+> **blocked** rows are. See the 2026-11-22 entry in `DECISIONS.md`.
+
 `index.html` + `styles.css` are a static mock, rendered to `desktop.png` and
 `380.png` at the sizes `.agent/screens.yaml` declares. Not product code; the
 card's own `_getStyles()` is copied verbatim into the stylesheet so the mock

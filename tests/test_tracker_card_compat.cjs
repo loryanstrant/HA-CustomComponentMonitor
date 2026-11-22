@@ -81,11 +81,16 @@ function makeCard() {
   assert.match(html, /1 incompatible/, 'the header says how many are held back');
   assert.match(html, /Show incompatible/);
   assert.match(html, /Hidden: they need a newer Home Assistant than 2026\.10\.4\./);
-  // Two met, one unknown: bulk names its own scope rather than saying "all".
-  assert.match(html, /Update 2 of 3/);
-  assert.match(html, /1 skipped — requirement unknown/);
-  assert.doesNotMatch(html, /Update all/);
-  assert.deepEqual(Array.from(card._eligibleEntities), ['update.ok', 'update.ok2']);
+  // 1.23.0: two met and one unknown are all installable, so bulk covers every
+  // listed row and says so. The unknown one is still flagged beside it.
+  assert.match(html, /Update all \(3\)/);
+  assert.match(html, /1 with an unknown requirement/);
+  assert.doesNotMatch(html, /Update 2 of 3/);
+  assert.doesNotMatch(html, /skipped/);
+  assert.deepEqual(
+    Array.from(card._eligibleEntities),
+    ['update.mystery', 'update.ok', 'update.ok2']
+  );
 
   // Every listed row states its requirement; none is silent.
   assert.match(html, /Needs Home Assistant 2025\.6\.0 — you have it/);
@@ -100,11 +105,14 @@ function makeCard() {
   assert.match(html, /They cannot be installed from this card\./);
   assert.match(html, /Needs Home Assistant 2026\.11\.0 — you have 2026\.10\.4/);
   assert.match(html, /item blocked/);
-  // Revealing never grows the eligible set.
-  assert.deepEqual(Array.from(card._eligibleEntities), ['update.ok', 'update.ok2']);
-  assert.match(html, /Update 2 of 4/);
+  // Revealing never grows the eligible set — the blocked row stays out of it.
+  assert.deepEqual(
+    Array.from(card._eligibleEntities),
+    ['update.mystery', 'update.ok', 'update.ok2']
+  );
+  assert.match(html, /Update 3 of 4/);
   assert.match(html, /1 blocked/);
-  assert.match(html, /1 requirement unknown/);
+  assert.match(html, /1 with an unknown requirement/);
 
   /* 3. A blocked row offers no install at all ----------------------------- */
   card._expandedEntity = 'update.blocked';
@@ -122,27 +130,43 @@ function makeCard() {
   await card._handleUpdateAndAction('update.blocked');
   assert.equal(serviceCalls.length, 0, 'a blocked update is never installed from the card');
 
-  /* 4. An unknown requirement installs only after one tick ---------------- */
+  /* 4. An unknown requirement warns, and installs in one click (1.23.0) ------
+     1.22.0 made the user tick "install anyway" first. Most components declare
+     no minimum at all, so that was a second click on most rows for a warning
+     the backend never acted on. The explanation panel stays; the tick is gone. */
   card._expandedEntity = 'update.mystery';
   await card._doRender();
   html = card.shadowRoot.innerHTML;
-  assert.match(html, /Version 1\.5\.0 does not say which Home Assistant it needs\./);
-  assert.match(html, /names no minimum Home Assistant version/);
-  assert.match(html, /I understand the requirement is unknown — install 1\.5\.0 anyway/);
-  assert.match(html, /btn btn-update" data-action="update" data-entity="update\.mystery" disabled/);
-  assert.equal(card._installAllowed('update.mystery'), false);
-
-  card._ackUnknown['update.mystery'] = true;
-  await card._doRender();
-  html = card.shadowRoot.innerHTML;
-  assert.match(html, /btn btn-update" data-action="update" data-entity="update\.mystery">/);
-  assert.match(html, /box checked/);
+  const mysteryRow = rowOf(html, 'update.mystery');
+  assert.match(mysteryRow, /Version 1\.5\.0 does not say which Home Assistant it needs\./);
+  assert.match(mysteryRow, /names no minimum Home Assistant version/);
+  // The row still says it is unknown, in shapes and words, not colour alone.
+  assert.match(mysteryRow, /glyph unknown/);
+  // No acknowledgement of any kind is rendered or bound.
+  assert.doesNotMatch(html, /I understand the requirement is unknown/);
+  assert.doesNotMatch(html, /compat-ack/);
+  assert.doesNotMatch(html, /data-ack/);
+  // All three buttons render enabled straight away.
+  assert.match(mysteryRow, /btn btn-update" data-action="update" data-entity="update\.mystery">/);
+  assert.match(
+    mysteryRow,
+    /btn btn-action" data-action="update_action" data-entity="update\.mystery">/
+  );
   assert.equal(card._installAllowed('update.mystery'), true);
+  assert.equal(card._ackUnknown, undefined, 'the acknowledgement state is gone entirely');
 
-  // Closing the row forgets the tick, so it cannot carry over.
+  // And it survives closing and reopening the row — there is nothing to forget.
   card._toggleExpand('update.mystery');
-  assert.deepEqual(Object.keys(card._ackUnknown), []);
-  assert.equal(card._installAllowed('update.mystery'), false);
+  assert.equal(card._installAllowed('update.mystery'), true);
+  card._expandedEntity = 'update.mystery';
+
+  // The install really goes through, rather than being refused silently.
+  await card._handleUpdate('update.mystery');
+  assert.equal(serviceCalls.length, 1, 'an unknown-requirement update installs');
+  assert.equal(serviceCalls[0][0], 'update');
+  assert.equal(serviceCalls[0][1], 'install');
+  serviceCalls.length = 0;
+  card._actionInProgress = {}; // clear the "Installing…" state for later blocks
 
   /* 4b. A release whose own requirements could not be read (#115, 1.21.0) --
      The backend now re-reads hacs.json from the offered tag itself; when that
@@ -188,16 +212,25 @@ function makeCard() {
     unreadRow,
     /read from the release being offered, not from the copy HACS has cached/
   );
-  assert.equal(unread.card._installAllowed('update.unreadable_target'), false);
-  assert.ok(!Array.from(unread.card._eligibleEntities).includes('update.unreadable_target'), 'not in the eligible set');
+  // 1.23.0: a read that failed is still only a warning — it is installable and
+  // it is in the bulk set. What it must never do is read as compatible, which
+  // is what the assertions above guard.
+  assert.equal(unread.card._installAllowed('update.unreadable_target'), true);
+  assert.ok(
+    Array.from(unread.card._eligibleEntities).includes('update.unreadable_target'),
+    'an unreadable requirement no longer drops the row out of the bulk set'
+  );
 
   /* 5. Bulk always passes the explicit eligible set ------------------------ */
   await card._doRender();
   await card._handleUpdateAll();
   assert.equal(serviceCalls.length, 1);
   assert.equal(JSON.stringify(serviceCalls[0]), JSON.stringify([
-    'custom_component_monitor', 'update_all', { entity_ids: ['update.ok', 'update.ok2'] },
+    'custom_component_monitor', 'update_all',
+    { entity_ids: ['update.mystery', 'update.ok', 'update.ok2'] },
   ]));
+  // The blocked row is the only thing left out, so the dialog says "N of M".
+  assert.equal(card._shownEntities.length, 4);
 
   /* 6. Everything blocked: say so rather than showing an empty card -------- */
   const only = makeCard();
