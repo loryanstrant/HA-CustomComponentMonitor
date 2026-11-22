@@ -1068,9 +1068,11 @@ repository HACS still lists is the only record of how old that repository is, an
 deleting it does not free a record — the very next scan writes it back, wrong. The
 set where eviction actually costs nothing is the one the cap now bounds: repositories
 that have left HACS, have not served out their grace period, and that nobody has made
-a decision about. `seen` is therefore bounded by the size of the HACS store (roughly
-4,250 records, about 500 KB of JSON) rather than by `NEW_ITEMS_MAX_ENTRIES`, which is
-what the grace-period sweep was always there to guarantee.
+a decision about. `seen` is therefore bounded by the size of the HACS store rather than by
+`NEW_ITEMS_MAX_ENTRIES`, which is what the grace-period sweep was always there to
+guarantee. Measured on TEST1 after the fix: 4,259 records, 803,111 bytes of JSON —
+about 190 bytes a record, not the ~120 estimated in the plan, so quote 780 KB rather
+than the 500 KB this entry first claimed.
 
 **Lesson:** a fix verified only against the instance that reported the fault is a fix
 for that instance. The production registry made the protected records the obvious
