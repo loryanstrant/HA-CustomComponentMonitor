@@ -10,9 +10,10 @@ services, so the refusal lives there as well:
   an unknown state.
 
 Deliberately asymmetric: *blocked* (a declared minimum positively not met) is
-refused here, *unknown* is not — the service cannot see the card's per-row
-acknowledgement, and refusing every undeclared component would refuse almost
-all of them.
+refused here, *unknown* is not — refusing every undeclared component would
+refuse almost all of them. The card's own treatment of *unknown* has always
+been presentation rather than protection, and from 1.23.0 it is a warning with
+no extra click behind it.
 """
 from __future__ import annotations
 

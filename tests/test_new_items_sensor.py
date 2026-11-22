@@ -183,6 +183,58 @@ def test_an_empty_store_publishes_empty_lists_not_none(coordinator):
     assert sensor.native_value == 0
 
 
+def test_the_published_lists_are_copies_not_the_coordinators_own(coordinator):
+    """Why dismissing stopped working on screen in 1.22.0.
+
+    Home Assistant only sends an attribute to the browser when it differs from
+    the previous state's value. From 1.22.0 a dismissal removed rows from the
+    coordinator's list *in place*, so the old state and the new state held the
+    same list object, it compared equal to itself, and the delta left ``items``
+    out entirely. The dismissal reached the disk and never reached the screen.
+    """
+    items = [make_item(i) for i in range(3)]
+    hidden = [make_item(i, reason="matched \"sweden\"") for i in range(2)]
+    sensor = make_sensor(coordinator, items, hidden)
+
+    attrs = sensor.extra_state_attributes
+
+    assert attrs[ATTR_ITEMS] is not items
+    assert attrs[ATTR_HIDDEN] is not hidden
+    # Equal in content, so nothing the card reads has changed.
+    assert attrs[ATTR_ITEMS] == items
+
+
+def test_the_published_rows_are_copies_too_not_the_coordinators_dicts(coordinator):
+    """A shallow list copy would not have been enough.
+
+    The AI pass writes ``category`` and ``ai_pending`` straight into the
+    coordinator's row dicts. Shared rows compare element-wise equal however much
+    they have been edited, so an AI category would be dropped from the delta for
+    exactly the same reason a dismissal was.
+    """
+    items = [make_item(i, ai_pending=True) for i in range(3)]
+    sensor = make_sensor(coordinator, items, [])
+
+    published = sensor.extra_state_attributes[ATTR_ITEMS]
+
+    assert all(row is not source for row, source in zip(published, items))
+    # Editing the coordinator's row in place leaves the published snapshot alone.
+    items[0]["category"] = "Energy & solar"
+    assert published[0]["category"] == "Other"
+
+
+def test_two_reads_either_side_of_an_in_place_removal_compare_unequal(coordinator):
+    """The exact comparison Home Assistant makes before sending the delta."""
+    items = [make_item(i) for i in range(4)]
+    sensor = make_sensor(coordinator, items, [])
+
+    before = sensor.extra_state_attributes[ATTR_ITEMS]
+    items[:] = items[1:]  # what handle_dismiss_new_items does to the live list
+    after = sensor.extra_state_attributes[ATTR_ITEMS]
+
+    assert before != after
+
+
 @pytest.mark.parametrize("attribute", [ATTR_ITEMS, ATTR_HIDDEN])
 def test_the_two_big_lists_stay_out_of_the_recorder(attribute):
     """Capping the websocket payload does not make the recorder exclusion moot.

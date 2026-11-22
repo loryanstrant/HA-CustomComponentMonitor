@@ -652,9 +652,23 @@ class NewItemRegistry:
         decisions and must survive a repository vanishing (an uninstall, a
         HACS re-index, an upstream rename) just as much as one that stays.
 
-        Also enforces ``NEW_ITEMS_MAX_ENTRIES`` on ``seen``, oldest
-        ``first_seen`` dropped first, skipping anything ``dismissed`` or
-        ``never_hide`` so the cap never erases a user decision either.
+        Also enforces ``NEW_ITEMS_MAX_ENTRIES``, oldest ``first_seen`` dropped
+        first. The cap is measured against the records that may actually be
+        evicted — not against the whole ``seen`` map (1.23.0). Records carrying a
+        user decision (``dismissed``, ``never_hide``, ``auto_hidden``,
+        ``restored``) are unbounded by design, exactly as the paragraph above
+        promises, and counting them towards a cap they are exempt from made the
+        cap permanently unsatisfiable: with more protected records than the
+        limit, every scan computed an excess it could only take out of the live,
+        currently-visible rows, deleted all of them, and the next scan stamped
+        their first-seen at scan time. Every item then read as 0 days old,
+        newest-first ordering became arbitrary and nothing could ever age out of
+        the 30-day window.
+
+        ``seen`` can therefore exceed ``NEW_ITEMS_MAX_ENTRIES``. That is
+        accepted: the grace-period loop above still evicts anything absent from
+        the HACS snapshot, so the map stays bounded by reality rather than by a
+        number.
         """
         now_utc = _now_utc(now)
         known_keys = {item_key(name) for name in known_full_names if name}
@@ -686,15 +700,15 @@ class NewItemRegistry:
                 dropped += 1
                 self._dirty = True
 
-        if len(self._seen) > NEW_ITEMS_MAX_ENTRIES:
-            prunable = [
-                (key, record)
-                for key, record in self._seen.items()
-                if key not in self._dismissed and key not in self._never_hide
-                and key not in self._auto_hidden and key not in self._restored
-            ]
+        prunable = [
+            (key, record)
+            for key, record in self._seen.items()
+            if key not in self._dismissed and key not in self._never_hide
+            and key not in self._auto_hidden and key not in self._restored
+        ]
+        if len(prunable) > NEW_ITEMS_MAX_ENTRIES:
             prunable.sort(key=lambda kv: str(kv[1].get("first_seen") or ""))
-            excess = len(self._seen) - NEW_ITEMS_MAX_ENTRIES
+            excess = len(prunable) - NEW_ITEMS_MAX_ENTRIES
             for key, _record in prunable:
                 if excess <= 0:
                     break

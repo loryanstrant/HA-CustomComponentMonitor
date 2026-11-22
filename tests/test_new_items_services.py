@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.custom_component_monitor.const import (
+    ATTR_ITEMS,
     CONF_AI_CATEGORIZATION_ENABLED,
     CONF_AI_TASK_ENTITY,
     DOMAIN,
@@ -282,6 +283,36 @@ async def test_dismiss_all_empties_the_card_in_place(setup_integration):
     assert coordinator.data["new_items"]["items"] == []
     assert coordinator.data["new_items"]["dismissed_count"] == 3
     assert hass.states.get("sensor.hacs_new_items").state == "0"
+
+
+async def test_a_dismissal_actually_changes_the_published_attribute(setup_integration):
+    """The check Home Assistant itself makes before telling the browser (1.23.0).
+
+    The websocket layer sends an attribute only when the new value differs from
+    the previous state's. From 1.22.0 the dismissal was applied by editing the
+    coordinator's list in place, and the sensor published that very object, so
+    both states held one list, it compared equal to itself, and ``items`` was
+    left out of the delta. The row stayed on screen until the next hourly scan
+    built a new list — which is why pressing the X looked like it did nothing.
+
+    This asserts the comparison, not the count: the attribute read before the
+    dismissal must not equal the one read after it.
+    """
+    hass, _entry = setup_integration
+
+    before = hass.states.get("sensor.hacs_new_items").attributes[ATTR_ITEMS]
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_DISMISS_NEW_ITEMS,
+        {"repositories": [ALPHA]},
+        blocking=True,
+    )
+
+    after = hass.states.get("sensor.hacs_new_items").attributes[ATTR_ITEMS]
+    assert before != after
+    assert [item["full_name"] for item in before] == [ALPHA, BETA, GAMMA]
+    assert [item["full_name"] for item in after] == [BETA, GAMMA]
 
 
 async def test_dismiss_unknown_repository_is_skipped_silently(setup_integration):

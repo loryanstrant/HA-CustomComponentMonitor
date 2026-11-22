@@ -303,6 +303,55 @@ def test_prune_enforces_max_entries_dropping_oldest_first_seen_first(registry, m
     assert item_key("Newest/Repo") in registry._seen
 
 
+def test_protected_records_do_not_count_towards_the_cap(registry, monkeypatch):
+    """The fault behind "everything is 0 days old" (1.22.0 and earlier).
+
+    Dismissals are kept forever on purpose, so counting them towards a cap they
+    are exempt from made the cap permanently unsatisfiable. Here three
+    dismissals already exceed a cap of two, and the only live record is the one
+    the loop was allowed to delete -- so before the fix it was deleted on every
+    single scan and its first-seen was re-stamped by the next one.
+    """
+    monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
+    for name in ("Gone/One", "Gone/Two", "Gone/Three"):
+        registry.note_seen(name, now=at(40))
+        registry.dismiss(name)
+    registry.note_seen("Live/Repo", now=at(30))
+
+    dropped = registry.prune(["Live/Repo"], now=at(0))
+
+    assert dropped == 0
+    assert item_key("Live/Repo") in registry._seen
+    assert registry.age_days("Live/Repo", now=at(0)) == 30
+
+
+def test_the_cap_still_trims_the_oldest_once_the_evictable_half_exceeds_it(
+    registry, monkeypatch
+):
+    """Lifting the protected records out of the count does not lift the cap.
+
+    Same three dismissals as above, plus three live records against a cap of
+    two: exactly one live record goes, and it is the oldest.
+    """
+    monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
+    for name in ("Gone/One", "Gone/Two", "Gone/Three"):
+        registry.note_seen(name, now=at(40))
+        registry.dismiss(name)
+    registry.note_seen("Oldest/Live", now=at(30))
+    registry.note_seen("Middle/Live", now=at(20))
+    registry.note_seen("Newest/Live", now=at(10))
+
+    dropped = registry.prune(
+        ["Oldest/Live", "Middle/Live", "Newest/Live"], now=at(0)
+    )
+
+    assert dropped == 1
+    assert item_key("Oldest/Live") not in registry._seen
+    assert item_key("Middle/Live") in registry._seen
+    assert item_key("Newest/Live") in registry._seen
+    assert registry.dismissed_count == 3
+
+
 def test_prune_known_full_names_are_never_dropped_regardless_of_age(registry):
     registry.note_seen("Still/Present", now=at(500))
     registry._seen[item_key("Still/Present")]["last_present"] = at(

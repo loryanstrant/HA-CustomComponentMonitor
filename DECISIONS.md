@@ -961,3 +961,78 @@ the stable key instead, and the check becomes true when it should be true.
 time to be honest. "This is normal during startup" and "this has been happening for twenty
 minutes" are the same condition and different faults; a dedupe keyed only on the message
 can express one of them.
+
+## 2026-11-22 — Publish a copy, and count a cap only against what it may delete (1.23.0)
+
+Three faults, two of them invisible to the whole test suite because each one needed a
+*second* read to show up. The suite asserted the first read every time.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| The unknown-requirement acknowledgement | **Removed** — the warning panel stays, the tick does not | Kept; made sticky per entity; moved into the options flow |
+| Unknown-requirement rows in "Update all" | **Included**, and flagged beside the button | Left out of bulk, as 1.19.0 had them |
+| What the new-items sensor publishes | **A fresh list of fresh row dicts, every state write** | The coordinator's own list, as before |
+| Where the dismissal is applied | **Unchanged** — still removed from the coordinator's list in place | Reverted 1.22.0's in-place edit back to a full rescan |
+| What `NEW_ITEMS_MAX_ENTRIES` bounds | **The evictable records only** | The whole `seen` map, as before |
+| `seen` growing past 2,000 | **Accepted** — the grace-period sweep still bounds it by reality | A second cap over dismissals; expiring old dismissals |
+
+**Why the tick-box went, given 1.19.0 argued for it.** That entry's reasoning still
+stands: `unknown` is a third answer and must never be folded into `met`. What does not
+follow is the *click*. The 2026-11-12 table itself records the acknowledgement as
+card-only and deliberately not enforced server-side, because "a service call cannot see a
+card acknowledgement" — so the gate never protected anything a determined caller could not
+walk around, and the backend's own refusal (`compat.is_blocked`, both install services)
+is unchanged by this release. Measured against what the store actually declares, almost
+nothing does: the 1.21.0 entry records 0 of 6,279 catalogue rows carrying a `homeassistant`
+key. A gate that fires on the overwhelming majority of rows is not a gate, it is the
+default path with an extra step, and the thing it taught the user was to click through
+warnings. The panel that says *what* could not be established is the part that informs;
+the tick was the part that annoyed. Including those rows in "Update all" follows from the
+same reading, and is the owner's explicit call this session.
+
+**Why the sensor publishes a copy.** `extra_state_attributes` handed Home Assistant the
+coordinator's live list object, and 1.22.0 changed dismiss from a full rescan to
+`current_items[:] = kept` on that same object (2026-11-19, *Why dismiss stops refreshing* —
+which is right, and stays). Home Assistant's websocket layer sends an attribute only when
+`old_attributes[key] != value`, and a list edited in place is the *same object* in both
+states, so it compares equal to itself and `items` was dropped from the delta entirely. The
+dismissal reached the registry, the registry reached the disk, and nothing reached the
+screen until the next hourly scan built a new list. The live registry on the production
+instance dates it exactly: 235 dismissals on 19 November, then 4 / 1 / 1 after 1.22.0 was
+staged on 20 November at 19:34 — the shape of someone clicking, seeing nothing, and giving
+up. The row dicts are copied too, not only the list, because the AI pass writes `category`
+and `ai_pending` straight into those dicts; a shallow list copy would still compare
+element-wise equal and lose an AI category for exactly the same reason. Both lists are
+already in `_unrecorded_attributes`, so none of the copy reaches the database.
+
+**Why the fix is on the publishing side rather than the mutating side.** Reverting 1.22.0
+would have fixed the symptom and reinstated the bug that release exists to remove. More
+importantly, the publisher is the only place that can be *made safe once*: any future edit
+to the coordinator's data — in place, by another service, by the AI pass — now reaches the
+browser without needing to know this rule. The alternative was a rule every mutator has to
+remember, which is the shape of a bug that comes back.
+
+**Why the cap was counting the wrong set.** `prune()` enforced
+`NEW_ITEMS_MAX_ENTRIES = 2000` against the size of the whole `seen` map, while the eviction
+loop may only touch records that are *not* dismissed, never-hide, auto-hidden or restored.
+Those are kept forever on purpose. On the production instance the protected records alone
+were 2,393 (2,074 dismissed + 319 auto-hidden) against exactly zero evictable ones — so
+every scan computed an excess of several hundred, found the only records it was allowed to
+delete were the ~150 currently-visible rows, and deleted all of them. The next scan
+re-created them and stamped `first_seen` at scan time. Every row read 0 days old, which
+made `_newest_first` (which decides who survives the 300-row publish cap) arbitrary and
+made the 30-day window unable to expire anything. The cap now measures `len(prunable)`.
+
+**Lesson:** an attribute that is mutated in place is an attribute that is never sent. Home
+Assistant's state machine diffs by value against the previous state, so "I changed the
+data" and "the browser was told" are separate claims the way *it ran* and *it worked* are —
+and the gap between them is silent, survives a 621-test suite, and shows up only as a user
+saying the button does nothing. Publish a snapshot from the boundary, once, rather than
+trusting every writer behind it to replace the container.
+
+**Second lesson:** a cap is only honest if it is measured over the set it is allowed to
+act on. Counting protected records towards a limit they are exempt from makes the limit
+permanently unsatisfiable, and an unsatisfiable limit does not fail loudly — it takes its
+excess out of whatever it *can* reach, which here was precisely the live data. The test
+that would have caught it is the one where the protected records outnumber the cap, and
+the suite had no such fixture because the healthy case never produces one.

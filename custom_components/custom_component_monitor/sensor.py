@@ -2782,9 +2782,10 @@ class CustomComponentMonitorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """One sentence if this update is blocked, else ``None`` (#111).
 
         Deliberately only refuses a requirement positively established as
-        unmet. An unknown requirement is not a refusal here: the card's
-        per-row acknowledgement is where the user takes that risk knowingly,
-        and the service cannot see an acknowledgement.
+        unmet. An unknown requirement is not a refusal: most components
+        declare no minimum at all, so refusing on silence would refuse most
+        of the house. The card shows what could not be established, and the
+        user decides — it no longer asks them to tick a box first (1.23.0).
         """
         requirement = self.update_requirement(entity_id)
         if not is_blocked(requirement):
@@ -4210,6 +4211,24 @@ class HacsNewItemsSensor(CoordinatorEntity, SensorEntity):
             hidden = sorted(all_hidden, key=self._newest_first)[
                 :NEW_ITEMS_MAX_EXPOSED_HIDDEN
             ]
+
+        # Publish a copy, never the coordinator's own objects (1.23.0). Home
+        # Assistant's websocket layer sends an attribute to the browser only
+        # when it differs from the previous state's value, and the live list
+        # compares equal to itself however much it has changed — so from
+        # 1.22.0, when ``handle_dismiss_new_items`` started removing rows in
+        # place instead of rescanning, a dismissal was saved to disk and never
+        # reached the screen. Nothing appeared to happen until the next hourly
+        # scan built a fresh list.
+        #
+        # The row dicts are copied too, not just the list: the AI pass writes
+        # ``category`` and ``ai_pending`` straight into those dicts, so a
+        # shallow list copy would still compare element-wise equal and be
+        # dropped from the delta for exactly the same reason. Cost is a few
+        # hundred small dicts per state write, and both lists are unrecorded,
+        # so none of it reaches the database.
+        items = [dict(item) for item in items]
+        hidden = [dict(item) for item in hidden]
 
         by_category: dict[str, int] = {}
         for item in items:
