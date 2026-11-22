@@ -288,14 +288,13 @@ def test_prune_never_drops_dismissed_or_never_hide_even_long_vanished(registry):
 
 
 def test_prune_enforces_max_entries_dropping_oldest_first_seen_first(registry, monkeypatch):
+    """Three repositories gone from HACS but still inside the grace period."""
     monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
     registry.note_seen("Oldest/Repo", now=at(30))
     registry.note_seen("Middle/Repo", now=at(20))
     registry.note_seen("Newest/Repo", now=at(10))
 
-    dropped = registry.prune(
-        ["Oldest/Repo", "Middle/Repo", "Newest/Repo"], now=at(0)
-    )
+    dropped = registry.prune([], now=at(0))
 
     assert dropped == 1
     assert item_key("Oldest/Repo") not in registry._seen
@@ -328,10 +327,11 @@ def test_protected_records_do_not_count_towards_the_cap(registry, monkeypatch):
 def test_the_cap_still_trims_the_oldest_once_the_evictable_half_exceeds_it(
     registry, monkeypatch
 ):
-    """Lifting the protected records out of the count does not lift the cap.
+    """Lifting the exempt records out of the count does not lift the cap.
 
-    Same three dismissals as above, plus three live records against a cap of
-    two: exactly one live record goes, and it is the oldest.
+    Same three dismissals as above, plus three records that have left the HACS
+    snapshot but are still inside the grace period, against a cap of two:
+    exactly one of those three goes, and it is the oldest.
     """
     monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
     for name in ("Gone/One", "Gone/Two", "Gone/Three"):
@@ -341,15 +341,56 @@ def test_the_cap_still_trims_the_oldest_once_the_evictable_half_exceeds_it(
     registry.note_seen("Middle/Live", now=at(20))
     registry.note_seen("Newest/Live", now=at(10))
 
-    dropped = registry.prune(
-        ["Oldest/Live", "Middle/Live", "Newest/Live"], now=at(0)
-    )
+    dropped = registry.prune([], now=at(0))
 
     assert dropped == 1
     assert item_key("Oldest/Live") not in registry._seen
     assert item_key("Middle/Live") in registry._seen
     assert item_key("Newest/Live") in registry._seen
     assert registry.dismissed_count == 3
+
+
+def test_the_cap_never_evicts_a_repository_still_listed_in_hacs(registry, monkeypatch):
+    """The rest of "everything is 0 days old", caught on a real store (1.23.1).
+
+    1.23.0 lifted the user-decision records out of the count, which fixed the
+    production instance and not the general case: HACS lists thousands of
+    repositories, so on any store where the *new* ones alone outnumber the cap,
+    the only records the loop could reach were still the live ones. Here five
+    repositories are all currently listed in HACS against a cap of two — the cap
+    must evict none of them, because their first-seen dates are the only record
+    of how old they are.
+    """
+    monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
+    listed = ["Live/One", "Live/Two", "Live/Three", "Live/Four", "Live/Five"]
+    for offset, name in enumerate(listed):
+        registry.note_seen(name, now=at(30 - offset))
+
+    dropped = registry.prune(listed, now=at(0))
+
+    assert dropped == 0
+    assert all(item_key(name) in registry._seen for name in listed)
+    assert registry.age_days("Live/One", now=at(0)) == 30
+
+
+def test_the_cap_still_bites_on_departed_repositories_beside_listed_ones(
+    registry, monkeypatch
+):
+    """Exempting the listed ones is not the same as switching the cap off."""
+    monkeypatch.setattr(new_items, "NEW_ITEMS_MAX_ENTRIES", 2)
+    listed = ["Live/One", "Live/Two", "Live/Three"]
+    for name in listed:
+        registry.note_seen(name, now=at(30))
+    registry.note_seen("Departed/Oldest", now=at(20))
+    registry.note_seen("Departed/Middle", now=at(15))
+    registry.note_seen("Departed/Newest", now=at(10))
+
+    dropped = registry.prune(listed, now=at(0))
+
+    assert dropped == 1
+    assert item_key("Departed/Oldest") not in registry._seen
+    assert item_key("Departed/Middle") in registry._seen
+    assert all(item_key(name) in registry._seen for name in listed)
 
 
 def test_prune_known_full_names_are_never_dropped_regardless_of_age(registry):

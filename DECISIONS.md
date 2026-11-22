@@ -1036,3 +1036,46 @@ permanently unsatisfiable, and an unsatisfiable limit does not fail loudly — i
 excess out of whatever it *can* reach, which here was precisely the live data. The test
 that would have caught it is the one where the protected records outnumber the cap, and
 the suite had no such fixture because the healthy case never produces one.
+
+## 2026-11-22 — A cap may not evict what is still on the shelf (1.23.1)
+
+Same day, same fault, second half. 1.23.0 lifted the user-decision records
+(`dismissed`, `never_hide`, `auto_hidden`, `restored`) out of the
+`NEW_ITEMS_MAX_ENTRIES` count because the production registry held 2,393 of them
+against zero evictable ones. That reading was right and the fix held on paper.
+Installing it on TEST1 showed it was not the whole fault: after two scans, 139 of
+the 300 published rows had their `first_seen` re-stamped at scan time, exactly the
+symptom the release claims to fix.
+
+| Decision | Chosen | Rejected |
+|---|---|---|
+| What else the cap may not evict | **Anything still present in the HACS snapshot** | Raising the number; dropping the cap entirely |
+| What the cap is left bounding | **Departed repositories still inside their 45-day grace period** | The whole `seen` map; the live set |
+| Version | **1.23.1** — 1.23.0 stays published as the superseded test build | Re-cutting 1.23.0 over the same tag |
+
+**Why the first fix was not enough.** The protected-records exemption only helps a
+registry whose *protected* half is the oversized one. TEST1's registry is young —
+2 dismissals, 366 auto-hides — but HACS lists about 4,250 repositories and 3,892 of
+them were new to it, so the evictable set alone was roughly twice the cap. The loop
+computed an excess of some 1,900, and the only records it could reach were the live
+ones. It deleted them, the next scan re-created them at the current time, and every
+row read 0 days old again. Production was weeks away from the same state: 4,258
+repositories minus 2,393 already decided leaves about 1,865 evictable, which crosses
+2,000 as HACS indexes more.
+
+**Why presence in the snapshot is the right exemption.** A `first_seen` date for a
+repository HACS still lists is the only record of how old that repository is, and
+deleting it does not free a record — the very next scan writes it back, wrong. The
+set where eviction actually costs nothing is the one the cap now bounds: repositories
+that have left HACS, have not served out their grace period, and that nobody has made
+a decision about. `seen` is therefore bounded by the size of the HACS store (roughly
+4,250 records, about 500 KB of JSON) rather than by `NEW_ITEMS_MAX_ENTRIES`, which is
+what the grace-period sweep was always there to guarantee.
+
+**Lesson:** a fix verified only against the instance that reported the fault is a fix
+for that instance. The production registry made the protected records the obvious
+oversized set, and that reading survived a 600-test suite, a reviewer pass and a
+release, because every test fixture was built from the same shape. The test instance —
+a *differently* broken store, not a smaller copy of the same one — found the rest in
+one scan. Install on something whose numbers do not match the report before calling a
+size-related fix done.
