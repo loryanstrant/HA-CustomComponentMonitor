@@ -653,22 +653,33 @@ class NewItemRegistry:
         HACS re-index, an upstream rename) just as much as one that stays.
 
         Also enforces ``NEW_ITEMS_MAX_ENTRIES``, oldest ``first_seen`` dropped
-        first. The cap is measured against the records that may actually be
-        evicted — not against the whole ``seen`` map (1.23.0). Records carrying a
-        user decision (``dismissed``, ``never_hide``, ``auto_hidden``,
-        ``restored``) are unbounded by design, exactly as the paragraph above
-        promises, and counting them towards a cap they are exempt from made the
-        cap permanently unsatisfiable: with more protected records than the
-        limit, every scan computed an excess it could only take out of the live,
-        currently-visible rows, deleted all of them, and the next scan stamped
-        their first-seen at scan time. Every item then read as 0 days old,
-        newest-first ordering became arbitrary and nothing could ever age out of
+        first — but only over records this prune is *allowed* to lose. Two
+        exemptions, both learned the same way (1.23.0, then 1.23.1 when the first
+        one proved insufficient on a real store):
+
+        * records carrying a user decision (``dismissed``, ``never_hide``,
+          ``auto_hidden``, ``restored``), which are kept forever by design;
+        * records for repositories **still present in the HACS snapshot**, whose
+          ``first_seen`` is the only thing that knows how old they are.
+
+        Counting either towards a cap they cannot satisfy made the cap
+        permanently unsatisfiable, and an unsatisfiable cap does not fail loudly
+        — it takes its excess out of whatever it *can* reach. With only the first
+        exemption, a store listing more new repositories than the cap (HACS lists
+        thousands) still had its entire live set evicted on every scan, and the
+        next scan stamped ``first_seen`` at scan time: every item read 0 days
+        old, newest-first ordering was arbitrary, and nothing could age out of
         the 30-day window.
 
-        ``seen`` can therefore exceed ``NEW_ITEMS_MAX_ENTRIES``. That is
-        accepted: the grace-period loop above still evicts anything absent from
-        the HACS snapshot, so the map stays bounded by reality rather than by a
-        number.
+        What the cap is left bounding is the only set where dropping a record
+        costs nothing: repositories that have left the HACS snapshot but have not
+        yet served out their grace period, and that nobody has made a decision
+        about.
+
+        ``seen`` can therefore exceed ``NEW_ITEMS_MAX_ENTRIES``, and on a live
+        store it will. That is accepted: the grace-period loop above still evicts
+        anything absent from the HACS snapshot, so the map stays bounded by what
+        HACS actually lists rather than by a number.
         """
         now_utc = _now_utc(now)
         known_keys = {item_key(name) for name in known_full_names if name}
@@ -703,7 +714,8 @@ class NewItemRegistry:
         prunable = [
             (key, record)
             for key, record in self._seen.items()
-            if key not in self._dismissed and key not in self._never_hide
+            if key not in known_keys
+            and key not in self._dismissed and key not in self._never_hide
             and key not in self._auto_hidden and key not in self._restored
         ]
         if len(prunable) > NEW_ITEMS_MAX_ENTRIES:

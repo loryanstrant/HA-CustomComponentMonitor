@@ -6,7 +6,7 @@
  * and an auditable "hidden" list for country-filtered items.
  */
 
-const CARD_VERSION = "1.23.0";
+const CARD_VERSION = "1.23.1";
 const HNI_DOMAIN = "custom_component_monitor";
 
 /* -- Helpers -------------------------------------------------- */
