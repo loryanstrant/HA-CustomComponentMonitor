@@ -10,7 +10,7 @@
     },
     "topics": [],
     "licence": "MIT License",
-    "file_count": 112
+    "file_count": 114
   },
   "start_here": {
     "readme": "README.md",
@@ -72,7 +72,7 @@
     {
       "path": "DECISIONS.md",
       "title": "Decisions",
-      "lines": 963,
+      "lines": 1083,
       "headings": [
         {
           "level": 2,
@@ -198,6 +198,16 @@
           "level": 3,
           "text": "Issue #76 — two error lines in the log after every restart",
           "anchor": "issue-76--two-error-lines-in-the-log-after-every-restart"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-22 — Publish a copy, and count a cap only against what it may delete (1.23.0)",
+          "anchor": "2026-11-22--publish-a-copy-and-count-a-cap-only-against-what-it-may-delete-1230"
+        },
+        {
+          "level": 2,
+          "text": "2026-11-22 — A cap may not evict what is still on the shelf (1.23.1)",
+          "anchor": "2026-11-22--a-cap-may-not-evict-what-is-still-on-the-shelf-1231"
         }
       ]
     },
@@ -580,6 +590,50 @@
       ]
     },
     {
+      "path": "docs/release-notes/1.23.0.md",
+      "title": "1.23.0",
+      "lines": 14,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.23.0",
+          "anchor": "whats-new-in-v1230"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
+      "path": "docs/release-notes/1.23.1.md",
+      "title": "1.23.1",
+      "lines": 15,
+      "headings": [
+        {
+          "level": 2,
+          "text": "What's new in v1.23.1",
+          "anchor": "whats-new-in-v1231"
+        },
+        {
+          "level": 3,
+          "text": "Fixed",
+          "anchor": "fixed"
+        },
+        {
+          "level": 3,
+          "text": "Upgrade notes",
+          "anchor": "upgrade-notes"
+        }
+      ]
+    },
+    {
       "path": "docs/specs/card-editor-ha-form.md",
       "title": "Spec — Card editors on ha-form",
       "lines": 148,
@@ -741,7 +795,7 @@
     {
       "path": "docs/specs/update-compatibility-preview/README.md",
       "title": "Design preview — Home Assistant compatibility filter",
-      "lines": 55,
+      "lines": 61,
       "headings": [
         {
           "level": 2,
@@ -2959,8 +3013,8 @@
     "tracked_files_only": true
   },
   "generated": {
-    "source_commit": "d2f911c0bb17dcc610138769050c1c08a077ace5",
-    "content_hash": "cda7e39535d6cf61",
+    "source_commit": "f29e9f4df9449a0445c14b42d8afe7e6d948be6e",
+    "content_hash": "c60dc664269605c3",
     "generator": "navgen"
   }
 }
